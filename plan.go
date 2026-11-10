@@ -245,7 +245,8 @@ func buildPlan(m *LocalMetadata, r *Remote) *Plan {
 		local := m.Subscriptions[pid]
 		remote := r.Subscriptions[pid]
 		if remote == nil {
-			p.Notes = append(p.Notes, "subscriptions/"+pid+": no such subscription in App Store Connect; skipped")
+			p.Notes = append(p.Notes, "subscriptions/"+pid+": no such subscription in App Store Connect; skipped (found: "+
+				firstNonEmpty(strings.Join(sortedKeys(r.Subscriptions), ", "), "none")+")")
 			continue
 		}
 		if local.ReviewNote.Set {
@@ -281,7 +282,8 @@ func buildPlan(m *LocalMetadata, r *Remote) *Plan {
 	for _, ref := range sortedKeys(m.SubscriptionGroups) {
 		remote := r.Groups[ref]
 		if remote == nil {
-			p.Notes = append(p.Notes, "subscription_groups/"+ref+": no group with that reference name; skipped")
+			p.Notes = append(p.Notes, "subscription_groups/"+ref+": no group with that reference name; skipped (found: "+
+				firstNonEmpty(strings.Join(sortedKeys(r.Groups), ", "), "none")+")")
 			continue
 		}
 		for _, loc := range sortedKeys(m.SubscriptionGroups[ref]) {

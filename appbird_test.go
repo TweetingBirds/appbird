@@ -237,6 +237,16 @@ func TestPushUpdatesCreatesAndNeverSubmits(t *testing.T) {
 	contains(t, out, "No differences")
 }
 
+func TestUnknownSubscriptionListsTheOnesThatExist(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("subscriptions/com.example.monthly/review_note.txt", "Note\n")
+	e.write("subscription_groups/Pro/en-US/name.txt", "Pro\n")
+	code, out, _ := e.run("diff")
+	must(t, code == 0, "exit %d", code)
+	contains(t, out, "com.example.monthly: no such subscription in App Store Connect; skipped (found: com.example.annual)")
+	contains(t, out, "Pro: no group with that reference name; skipped (found: Premium)")
+}
+
 func TestNewAppStoreLocaleNeedsAName(t *testing.T) {
 	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
 	e.write("fr-FR/subtitle.txt", "Sous-titre\n")
