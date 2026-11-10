@@ -38,7 +38,7 @@ Usage:
                 [--exit-code] [--yes] [--locale xx]
                                               screenshots, app previews and creative assets
                                               (pull: screenshots and previews only)
-  appbird create-version <X.Y.Z> [--yes]     create the next App Store version to edit
+  appbird create-version <X.Y.Z> [--yes]      create the next App Store version to edit
   appbird version
 
 Every command takes -c <path to appbird.json> and -v (print each API request).
