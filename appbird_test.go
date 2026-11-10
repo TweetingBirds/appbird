@@ -506,6 +506,45 @@ func TestScreenshotsCreateNoopReplaceAndReorder(t *testing.T) {
 	must(t, strings.Join(e.shotsIn(set), ",") == "02-map.png,01-journal.png", "order %v", e.shotsIn(set))
 }
 
+func TestMediaPullMatchesWhatWasUploaded(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("screenshots/en-US/APP_IPHONE_67/journal.png", png(1320, 2868, false, "a"))
+	e.write("screenshots/en-US/APP_IPHONE_67/map.png", png(1320, 2868, false, "b"))
+	e.write("previews/en-US/IPHONE_67/01-tour.mov", "movie")
+	code, out, stderr := e.run("media", "push", "--yes")
+	must(t, code == 0, "push: %d %s%s", code, out, stderr)
+	os.RemoveAll(filepath.Join(e.repo, "metadata/screenshots"))
+	os.RemoveAll(filepath.Join(e.repo, "metadata/previews"))
+
+	e.fake.reset()
+	code, out, stderr = e.run("media", "pull")
+	must(t, code == 0, "pull: %d %s%s", code, out, stderr)
+	must(t, len(e.fake.writes()) == 0, "pull doesn't write: %v", paths(e.fake.writes()))
+	must(t, !e.fake.sawAuthOnUpload, "CDN downloads carry no token")
+	contains(t, out, "+ metadata/screenshots/en-US/APP_IPHONE_67/01-journal.png")
+	contains(t, out, "+ metadata/screenshots/en-US/APP_IPHONE_67/02-map.png")
+	contains(t, out, "+ metadata/previews/en-US/IPHONE_67/01-tour.mov")
+	contains(t, e.read("screenshots/en-US/APP_IPHONE_67/01-journal.png"), "re-encoded")
+
+	// The downloads differ from the uploads, but count as them.
+	code, out, _ = e.run("media", "diff", "--exit-code")
+	must(t, code == 0, "diff after pull:\n%s", out)
+	_, out, _ = e.run("media", "pull")
+	contains(t, out, "already matches")
+
+	// Changing a pulled file makes it a new upload.
+	e.write("screenshots/en-US/APP_IPHONE_67/02-map.png", png(1320, 2868, false, "c"))
+	code, out, _ = e.run("media", "diff", "--exit-code")
+	must(t, code == 2, "diff after an edit: %d\n%s", code, out)
+	contains(t, out, "1 upload, 1 remove")
+
+	// Pulling again puts App Store Connect's set back.
+	_, out, _ = e.run("media", "pull", "--only", "screenshots")
+	contains(t, out, "Wrote 2 file(s)")
+	code, out, _ = e.run("media", "diff", "--exit-code")
+	must(t, code == 0, "diff after the second pull:\n%s", out)
+}
+
 func TestScreenshotsWaitForAnEditableVersion(t *testing.T) {
 	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
 	e.write("screenshots/en-US/APP_IPHONE_67/01.png", png(1320, 2868, false, ""))

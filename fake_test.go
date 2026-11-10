@@ -175,6 +175,16 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 	store := strings.Replace(path, "/v2/", "/v1/", 1)
 	parts := strings.Split(strings.Trim(store, "/"), "/")
 	raw, _ := io.ReadAll(r.Body)
+	if parts[0] == "asset" {
+		// Apple's CDN serves a re-encoded copy, never the uploaded bytes.
+		f.requests = append(f.requests, recorded{r.Method, path, nil})
+		if r.Header.Get("Authorization") != "" {
+			f.sawAuthOnUpload = true
+		}
+		w.WriteHeader(200)
+		w.Write(append(append([]byte{}, f.uploads[parts[1]]...), []byte("re-encoded "+parts[2])...))
+		return
+	}
 	if parts[0] == "upload" {
 		if r.Header.Get("Authorization") != "" {
 			f.sawAuthOnUpload = true
@@ -267,8 +277,11 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 			switch key[0] {
 			case "appScreenshots":
 				f.resources[key]["assetDeliveryState"] = map[string]any{"state": "COMPLETE"}
+				f.resources[key]["imageAsset"] = map[string]any{"templateUrl": f.server.URL + "/asset/" + key[1] + "/{w}x{h}bb.{f}",
+					"width": 1320, "height": 2868}
 			case "appPreviews":
 				f.resources[key]["videoDeliveryState"] = map[string]any{"state": "COMPLETE"}
+				f.resources[key]["videoUrl"] = f.server.URL + "/asset/" + key[1] + "/video.mp4"
 			default:
 				f.resources[key]["state"] = "PREPARE_FOR_SUBMISSION"
 			}
