@@ -1,7 +1,8 @@
 // Appbird keeps an app's App Store Connect listing in sync with files in its repo.
 //
-// It only ever edits listing text and media. It never submits anything for review, releases a
-// version, deletes a localization, or touches prices or availability. See README.md.
+// It edits listing text, App Info settings and media, and creates a version when asked. It never
+// submits anything for review, releases a version, deletes a localization, or touches prices
+// or availability. See README.md.
 package main
 
 import (
