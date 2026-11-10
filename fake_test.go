@@ -29,6 +29,20 @@ type fakeASC struct {
 	uploads         map[string][]byte
 	created         int
 	sawAuthOnUpload bool
+	// fail makes the next n requests to "METHOD /path" fail: status > 0 answers with that
+	// status, status -1 drops the connection.
+	fail map[string]*failure
+}
+
+type failure struct{ status, times int }
+
+func (f *fakeASC) failNext(method, path string, status, times int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail == nil {
+		f.fail = map[string]*failure{}
+	}
+	f.fail[method+" "+path] = &failure{status, times}
 }
 
 var segment = map[string]string{"appAssetLibraryImages": "images", "appAssetLibraryVideos": "videos",
@@ -165,6 +179,18 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(raw, &body)
 	}
 	f.requests = append(f.requests, recorded{r.Method, path, body})
+	if fl := f.fail[r.Method+" "+path]; fl != nil && fl.times > 0 {
+		fl.times--
+		if fl.status < 0 {
+			if hj, ok := w.(http.Hijacker); ok {
+				conn, _, _ := hj.Hijack()
+				conn.Close()
+				return
+			}
+		}
+		reply(w, fl.status, map[string]any{"errors": []any{map[string]any{"title": "Injected failure"}}})
+		return
+	}
 
 	switch r.Method {
 	case "GET":

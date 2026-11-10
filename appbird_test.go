@@ -41,6 +41,7 @@ func setup(t *testing.T, versionState, infoState string) *env {
 	t.Setenv("ASC_PRIVATE_KEY", "")
 	t.Setenv("ASC_API_BASE", fake.server.URL)
 	t.Setenv("GITHUB_STEP_SUMMARY", "")
+	retryDelay = time.Millisecond
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, "appbird.json"), []byte(`{"bundle_id": "com.example.app"}`), 0o644)
 	old, _ := os.Getwd()
@@ -263,6 +264,59 @@ func TestValidationFailureSendsNothing(t *testing.T) {
 	must(t, code == 1, "exit %d", code)
 	contains(t, stderr, "nothing was sent")
 	must(t, len(e.fake.requests) == 0, "no requests at all")
+}
+
+// ---- failures -------------------------------------------------------------------------------
+
+func TestPushRetriesAPatchAfterAServerError(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("en-US/description.txt", "New description.\n")
+	e.fake.failNext("PATCH", "/v1/appStoreVersionLocalizations/vl1", 500, 2)
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	must(t, e.fake.attr("appStoreVersionLocalizations", "vl1", "description") == "New description.", "written on the third try")
+}
+
+func TestPushNeverRetriesACreateAndReportsWhatWasWritten(t *testing.T) {
+	for _, status := range []int{500, -1} {
+		e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+		e.write("en-US/description.txt", "New description.\n")
+		e.write("de-DE/description.txt", "Neu.\n")
+		e.write("fr-FR/name.txt", "Exemple\n")
+		e.fake.failNext("POST", "/v1/appInfoLocalizations", status, 1)
+		code, out, stderr := e.run("push", "--yes")
+		must(t, code == 1, "status %d: exit %d", status, code)
+		posts := 0
+		for _, w := range e.fake.writes() {
+			if w.Method == "POST" && w.Path == "/v1/appInfoLocalizations" {
+				posts++
+			}
+		}
+		must(t, posts == 1, "status %d: the create was sent %d times", status, posts)
+		contains(t, out, "→ add App Info locale fr-FR")
+		contains(t, stderr, "Stopped at step 1 of 3: add App Info locale fr-FR")
+		contains(t, stderr, "✗ update 1.0 en-US")
+		contains(t, stderr, "may or may not have reached App Store Connect")
+		contains(t, stderr, "0 of 3 step(s) written")
+	}
+}
+
+func TestPushReportsStepsWrittenBeforeAFailure(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("en-US/subtitle.txt", "New subtitle\n")
+	e.write("en-US/description.txt", "New description.\n")
+	e.fake.failNext("PATCH", "/v1/appStoreVersionLocalizations/vl1", 409, 1)
+	code, _, stderr := e.run("push", "--yes")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "✓ update App Info en-US")
+	contains(t, stderr, "Injected failure")
+	contains(t, stderr, "1 of 2 step(s) written")
+	must(t, !strings.Contains(stderr, "may or may not"), "a 409 is a clear refusal")
+	// Pushing again only sends what's left.
+	e.fake.reset()
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	must(t, len(e.fake.writes()) == 1, "only the failed step again: %v", paths(e.fake.writes()))
 }
 
 // ---- pull and EULA --------------------------------------------------------------------------

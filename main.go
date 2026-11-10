@@ -277,12 +277,32 @@ func (a *app) confirm(question string, yes bool) (bool, error) {
 	return false, nil
 }
 
+// execute runs the plan in order and stops at the first failure. Every operation is computed
+// from App Store Connect's current state, so running the same command again picks up where
+// this one stopped.
 func (a *app) execute(c *Client, p *Plan) error {
-	for _, op := range p.Operations {
+	for i, op := range p.Operations {
 		fmt.Fprintln(a.out, "→", op.Describe)
-		if err := op.Run(c); err != nil {
-			return err
+		err := op.Run(c)
+		if err == nil {
+			continue
 		}
+		fmt.Fprintf(a.err, "\nStopped at step %d of %d: %s\n  %v\n", i+1, len(p.Operations), op.Describe, err)
+		if i > 0 {
+			fmt.Fprintf(a.err, "Written before it stopped (%d):\n", i)
+			for _, done := range p.Operations[:i] {
+				fmt.Fprintln(a.err, "  ✓", done.Describe)
+			}
+		}
+		fmt.Fprintf(a.err, "Not written (%d):\n", len(p.Operations)-i)
+		for _, rest := range p.Operations[i:] {
+			fmt.Fprintln(a.err, "  ✗", rest.Describe)
+		}
+		var uncertain uncertainError
+		if errors.As(err, &uncertain) {
+			fmt.Fprintln(a.err, "The failed step may or may not have reached App Store Connect.")
+		}
+		return userErr("%d of %d step(s) written. Run the diff again to see what's left; pushing again continues from there.", i, len(p.Operations))
 	}
 	return nil
 }

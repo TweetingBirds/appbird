@@ -194,6 +194,16 @@ func (c *Client) auth() (string, error) {
 
 var errNotFound = fmt.Errorf("not found")
 
+// retryDelay is the first backoff between attempts; tests shorten it.
+var retryDelay = time.Second
+
+// uncertainError means a create may or may not have reached App Store Connect: the connection
+// failed or Apple answered with a server error after the request was sent. Creates aren't
+// retried, so a second attempt can't make a duplicate.
+type uncertainError struct{ msg string }
+
+func (e uncertainError) Error() string { return e.msg }
+
 func (c *Client) do(method, path string, params url.Values, body any) (*document, error) {
 	u := path
 	if !strings.HasPrefix(u, "http") {
@@ -210,6 +220,9 @@ func (c *Client) do(method, path string, params url.Values, body any) (*document
 	if body != nil {
 		payload, _ = json.Marshal(body)
 	}
+	// GET, PATCH and DELETE can be sent again safely. A POST creates something, so it's only
+	// retried when Apple refused it outright (429: rate limited, nothing was done).
+	idempotent := method != http.MethodPost
 	for attempt := 0; ; attempt++ {
 		token, err := c.auth()
 		if err != nil {
@@ -224,9 +237,12 @@ func (c *Client) do(method, path string, params url.Values, body any) (*document
 		}
 		resp, err := c.http.Do(req)
 		if err != nil {
-			if attempt < 4 {
-				time.Sleep(time.Duration(1<<attempt) * time.Second)
+			if idempotent && attempt < 4 {
+				time.Sleep(retryDelay << attempt)
 				continue
+			}
+			if !idempotent {
+				return nil, uncertainError{fmt.Sprintf("%s %s: %v", method, path, err)}
 			}
 			return nil, userErr("%s %s: %v", method, path, err)
 		}
@@ -235,9 +251,17 @@ func (c *Client) do(method, path string, params url.Values, body any) (*document
 		switch {
 		case resp.StatusCode == 404 && method == http.MethodGet:
 			return nil, errNotFound
-		case (resp.StatusCode == 429 || resp.StatusCode >= 500) && attempt < 4:
-			time.Sleep(time.Duration(1<<attempt) * time.Second)
+		case resp.StatusCode == 404 && method == http.MethodDelete && attempt > 0:
+			// An earlier attempt deleted it and the answer was lost.
+			return &document{}, nil
+		case resp.StatusCode == 429 && attempt < 4:
+			time.Sleep(retryDelay << attempt)
 			continue
+		case resp.StatusCode >= 500 && idempotent && attempt < 4:
+			time.Sleep(retryDelay << attempt)
+			continue
+		case resp.StatusCode >= 500 && !idempotent:
+			return nil, uncertainError{fmt.Sprintf("%s %s failed with HTTP %d: %s", method, path, resp.StatusCode, apiErrors(raw))}
 		case resp.StatusCode >= 400:
 			return nil, userErr("%s %s failed with HTTP %d: %s", method, path, resp.StatusCode, apiErrors(raw))
 		}
@@ -390,7 +414,7 @@ func (c *Client) UploadParts(res *Resource, data []byte) error {
 				err = fmt.Errorf("HTTP %d", resp.StatusCode)
 			}
 			lastErr = err
-			time.Sleep(time.Duration(1<<attempt) * time.Second)
+			time.Sleep(retryDelay << attempt)
 		}
 		if lastErr != nil {
 			return userErr("uploading a part failed: %v", lastErr)
