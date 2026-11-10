@@ -22,7 +22,7 @@ Done: 2 change(s) written. Nothing was submitted for review.
 - **One binary, no dependencies.** A single static executable for macOS (Apple silicon and Intel), Linux and Windows. No Ruby, no gems, no Python, no OpenSSL.
 - **Safe by default.** `diff` only reads. `push` shows the diff and asks first. Appbird never submits anything for review, never releases a version, never deletes a localization, and never touches prices, availability, or your App Review contact details.
 - **fastlane-compatible layout.** The text files use fastlane deliver's names (`metadata/en-US/description.txt`), so you can move between the two.
-- **Works for any app.** One small `appbird.json` per app repo.
+- **Works for any app.** One small `appbird.json` per app repo, and one per platform if it ships on iOS, macOS, tvOS or visionOS.
 - **Easy to hand to an AI agent.** Copy-paste prompts below [set it up for you](#set-it-up-with-an-ai-agent).
 
 ## Install
@@ -62,7 +62,49 @@ From then on, edit the files, open a pull request, run `appbird diff`, and `appb
 }
 ```
 
-`platform` is `IOS`, `MAC_OS`, `TV_OS` or `VISION_OS`.
+`platform` is `IOS` (the default), `MAC_OS`, `TV_OS` or `VISION_OS`. If your app ships on more than one, see [Apps on more than one platform](#apps-on-more-than-one-platform).
+
+## Apps on more than one platform
+
+One `appbird.json` manages one platform's App Store versions. Appbird asks App Store Connect only for versions of the `platform` it names, so `status`, `diff`, `push`, `pull`, `media` and `--app-version` all see that platform alone. The `--platform` flag only matters to `appbird init`. Every other command reads the platform from `appbird.json`.
+
+Apple Watch apps and iMessage apps aren't platforms of their own here. They're part of the iOS version, so they use `IOS`, and their screenshots go in the `APP_WATCH_…` and `IMESSAGE_APP_…` folders next to the iPhone and iPad ones.
+
+If one app record in App Store Connect has, say, both an iOS and a macOS version (a universal purchase), give each platform its own config and metadata folder, and pick one with `-c`:
+
+```
+appbird.json               {"bundle_id": "com.example.myapp", "platform": "IOS",    "metadata_dir": "metadata"}
+appbird.macos.json         {"bundle_id": "com.example.myapp", "platform": "MAC_OS", "metadata_dir": "metadata-macos"}
+metadata/
+metadata-macos/
+```
+
+```sh
+appbird init com.example.myapp                          # the iOS config
+appbird pull
+appbird diff -c appbird.macos.json                      # the macOS config, written by hand as above
+appbird pull -c appbird.macos.json
+appbird media diff -c appbird.macos.json --app-version 2.0
+```
+
+`appbird init` always writes `appbird.json`, so write the second config yourself (or run `init` in another folder and move the file).
+
+**What each platform has of its own, and what they share.** Some of the listing belongs to each platform's version. The rest belongs to the app and is the same on every platform:
+
+| Per platform (one copy in each metadata folder) | Shared by the whole app |
+|---|---|
+| `description`, `keywords`, `promotional_text`, `release_notes`, `support_url`, `marketing_url` | `name`, `subtitle`, `privacy_url`, `privacy_choices_url` (App Info) |
+| `copyright.txt`, `review_information/notes.txt` | `eula.txt` |
+| `screenshots/`, `previews/`, and where creative assets are placed | `subscriptions/`, `subscription_groups/`, and the Asset Library that creative assets are uploaded to |
+
+Keep each shared file in **one** metadata folder only. `pull` writes every file into whichever folder you pulled into, so after pulling the second platform, delete its copies of the shared files (`name.txt`, `subtitle.txt`, the privacy URLs, `eula.txt`, `subscriptions/`, `subscription_groups/`). A missing file isn't managed, so the other config keeps owning them. If both folders keep a shared file and the two copies differ, each `push` overwrites the other's text.
+
+Things Appbird doesn't check for you:
+
+- **The platform value.** A typo such as `MACOS` isn't caught offline. `status` then lists no versions, and `diff` reports that the app has no App Store version yet.
+- **Display types against the platform.** `media validate` accepts every display type Apple has, whatever the platform. Use the ones for that platform: `APP_DESKTOP` and `DESKTOP` for macOS, `APP_APPLE_TV` and `APPLE_TV` for tvOS, `APP_APPLE_VISION_PRO` and `APPLE_VISION_PRO` for visionOS, and the iPhone, iPad, Watch and iMessage ones for iOS.
+
+In CI, run each step once per config (`appbird diff`, then `appbird diff -c appbird.macos.json`), and add the second metadata folder and config to the workflow's `pull_request` paths filter.
 
 ## API key
 
