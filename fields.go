@@ -37,6 +37,19 @@ var subscriptionGroupLocFields = []field{
 	{"custom_app_name", "customAppName", 30},
 }
 
+// TestFlight: per-locale notes on one build ("What to Test").
+var betaBuildFields = []field{
+	{"what_to_test", "whatsNew", 4000},
+}
+
+// TestFlight: per-locale test information for the app, shared by every build.
+var betaAppFields = []field{
+	{"description", "description", 4000},
+	{"feedback_email", "feedbackEmail", 0},
+	{"marketing_url", "marketingUrl", 0},
+	{"privacy_url", "privacyPolicyUrl", 0},
+}
+
 // Promotional text is the one version field Apple lets you change on a live version.
 var liveEditableVersionFields = map[string]bool{"promotional_text": true}
 
@@ -44,7 +57,7 @@ var urlFields = map[string]bool{
 	"privacy_url": true, "privacy_choices_url": true, "support_url": true, "marketing_url": true,
 }
 
-var oneLineFields = map[string]bool{"name": true, "subtitle": true, "custom_app_name": true}
+var oneLineFields = map[string]bool{"name": true, "subtitle": true, "custom_app_name": true, "feedback_email": true}
 
 const reviewNotesLimit = 4000
 const subscriptionReviewNoteLimit = 4000
@@ -52,7 +65,7 @@ const subscriptionReviewNoteLimit = 4000
 // Folders inside metadata/ that aren't locales.
 var specialDirs = map[string]bool{
 	"review_information": true, "subscriptions": true, "subscription_groups": true,
-	"screenshots": true, "previews": true, "creative_assets": true,
+	"screenshots": true, "previews": true, "creative_assets": true, "testflight": true,
 }
 
 // App Store Connect's listing locales. Unknown codes only warn, so new ones keep working.

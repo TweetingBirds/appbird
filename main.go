@@ -27,10 +27,12 @@ Usage:
                                               for MAC_OS, and so on)
   appbird validate                            check metadata/ offline (limits, URLs, locales)
   appbird status                              list the app's versions and which one is editable
-  appbird diff  [--app-version X.Y] [--exit-code]
+  appbird diff  [--app-version X.Y] [--build N] [--exit-code]
                                               show what differs (read-only)
-  appbird push  [--app-version X.Y] [--yes]   write the repo's text to App Store Connect
-  appbird pull  [--app-version X.Y] [--locale xx]
+  appbird push  [--app-version X.Y] [--build N] [--yes]
+                                              write the repo's text to App Store Connect
+                                              and TestFlight
+  appbird pull  [--app-version X.Y] [--build N] [--locale xx]
                                               write App Store Connect's text into metadata/
   appbird media validate|diff|push [--only screenshots|previews|creative] [--app-version X.Y]
                 [--exit-code] [--yes]         screenshots, app previews and creative assets
@@ -41,10 +43,10 @@ API key: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY_PATH or ASC_PRIVATE_KEY.
 `
 
 type options struct {
-	config, appVersion, platform string
-	verbose, yes, exitCode       bool
-	locales, only                multiFlag
-	args                         []string
+	config, appVersion, platform, build string
+	verbose, yes, exitCode              bool
+	locales, only                       multiFlag
+	args                                []string
 }
 
 type multiFlag []string
@@ -63,6 +65,7 @@ func parseOptions(name string, args []string, stderr io.Writer) (*options, error
 	fs.BoolVar(&o.verbose, "verbose", false, "")
 	fs.StringVar(&o.appVersion, "app-version", "", "")
 	fs.StringVar(&o.platform, "platform", "IOS", "")
+	fs.StringVar(&o.build, "build", "", "")
 	fs.BoolVar(&o.yes, "y", false, "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.exitCode, "exit-code", false, "")
@@ -228,7 +231,7 @@ func (a *app) cmdStatus(o *options) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	r, err := fetchRemote(c, cfg, "", false)
+	r, err := fetchRemote(c, cfg, "", "", false)
 	if err != nil {
 		return 1, err
 	}
@@ -243,6 +246,16 @@ func (a *app) cmdStatus(o *options) (int, error) {
 		fmt.Fprintf(a.out, "  %8s  %s%s\n", v.Str("versionString"), state, tag)
 	}
 	fmt.Fprintln(a.out, "Locales:", strings.Join(sortedKeys(r.VersionLocs), ", "))
+	b, bv, err := fetchBuild(c, cfg, r.App.ID, "", "")
+	if err != nil {
+		return 1, err
+	}
+	if b == nil {
+		fmt.Fprintln(a.out, "TestFlight: no build yet")
+	} else {
+		r.Build, r.BuildVersion = b, bv
+		fmt.Fprintf(a.out, "TestFlight: newest build %s, %s\n", r.buildLabel(), firstNonEmpty(b.Str("processingState"), "UNKNOWN"))
+	}
 	return 0, nil
 }
 
@@ -300,7 +313,7 @@ func (a *app) cmdDiffPush(o *options, push bool) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	r, err := fetchRemote(c, cfg, o.appVersion, true)
+	r, err := fetchRemote(c, cfg, o.appVersion, o.build, true)
 	if err != nil {
 		return 1, err
 	}
@@ -339,7 +352,7 @@ func (a *app) cmdPull(o *options) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	r, err := fetchRemote(c, cfg, o.appVersion, true)
+	r, err := fetchRemote(c, cfg, o.appVersion, o.build, true)
 	if err != nil {
 		return 1, err
 	}
@@ -408,7 +421,7 @@ func (a *app) cmdMedia(o *options) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	r, err := fetchRemote(c, cfg, o.appVersion, false)
+	r, err := fetchRemote(c, cfg, o.appVersion, "", false)
 	if err != nil {
 		return 1, err
 	}

@@ -153,6 +153,8 @@ type LocalMetadata struct {
 	Version            map[string]map[string]string
 	Subscriptions      map[string]*localSubscription           // product id
 	SubscriptionGroups map[string]map[string]map[string]string // reference name -> locale -> file
+	BetaBuild          map[string]map[string]string            // testflight/: locale -> file, on one build
+	BetaApp            map[string]map[string]string            // testflight/: locale -> file, for the app
 	UnknownFiles       []string
 }
 
@@ -194,6 +196,7 @@ func loadLocal(cfg Config) (*LocalMetadata, error) {
 	m := &LocalMetadata{
 		AppInfo: map[string]map[string]string{}, Version: map[string]map[string]string{},
 		Subscriptions: map[string]*localSubscription{}, SubscriptionGroups: map[string]map[string]map[string]string{},
+		BetaBuild: map[string]map[string]string{}, BetaApp: map[string]map[string]string{},
 	}
 	m.Copyright = readOptional(filepath.Join(root, "copyright.txt"))
 	m.EULA = readOptional(filepath.Join(root, "eula.txt"))
@@ -241,6 +244,8 @@ func loadLocal(cfg Config) (*LocalMetadata, error) {
 				}
 				m.SubscriptionGroups[g.Name()] = locs
 			}
+		case e.IsDir() && name == "testflight":
+			loadTestFlight(m, path)
 		case e.IsDir() && specialDirs[name]:
 		case e.IsDir():
 			values := readLocaleDir(path, allLocaleFields, &m.UnknownFiles)
@@ -260,7 +265,33 @@ func loadLocal(cfg Config) (*LocalMetadata, error) {
 	return m, nil
 }
 
+// loadTestFlight reads testflight/<locale>/: What to Test for the build, the rest for the app.
+func loadTestFlight(m *LocalMetadata, dir string) {
+	all := append(append([]field{}, betaBuildFields...), betaAppFields...)
+	buildNames := fieldNames(betaBuildFields)
+	for _, l := range sortedDir(dir) {
+		path := filepath.Join(dir, l.Name())
+		if strings.HasPrefix(l.Name(), ".") || l.Name() == "README.md" {
+			continue
+		}
+		if !l.IsDir() {
+			m.UnknownFiles = append(m.UnknownFiles, path)
+			continue
+		}
+		build, app := map[string]string{}, map[string]string{}
+		for k, v := range readLocaleDir(path, all, &m.UnknownFiles) {
+			if buildNames[k] {
+				build[k] = v
+			} else {
+				app[k] = v
+			}
+		}
+		m.BetaBuild[l.Name()], m.BetaApp[l.Name()] = build, app
+	}
+}
+
 var urlRE = regexp.MustCompile(`^https?://\S+$`)
+var emailRE = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
 
 func checkValue(problems, warnings *[]string, where, name, value string, limit int) {
 	if n := utf8.RuneCountInString(value); limit > 0 && n > limit {
@@ -276,6 +307,9 @@ func checkValue(problems, warnings *[]string, where, name, value string, limit i
 		if strings.Contains(value, ", ") {
 			*warnings = append(*warnings, fmt.Sprintf("%s/keywords: spaces after commas use up the 100-character limit", where))
 		}
+	}
+	if name == "feedback_email" && value != "" && !emailRE.MatchString(value) {
+		*problems = append(*problems, fmt.Sprintf("%s/%s: not an email address: %q", where, name, value))
 	}
 	if oneLineFields[name] && strings.Contains(value, "\n") {
 		*problems = append(*problems, fmt.Sprintf("%s/%s: must be one line", where, name))
@@ -308,6 +342,9 @@ func validateLocal(cfg Config, m *LocalMetadata) (problems, warnings []string) {
 		for l := range g {
 			locales[l] = true
 		}
+	}
+	for l := range m.BetaApp {
+		locales[l] = true
 	}
 	for _, l := range sortedKeys(locales) {
 		if !localeRE.MatchString(l) {
@@ -343,6 +380,14 @@ func validateLocal(cfg Config, m *LocalMetadata) (problems, warnings []string) {
 			for k, v := range m.SubscriptionGroups[g][l] {
 				checkValue(&problems, &warnings, "subscription_groups/"+g+"/"+l, k, v, limitOf(subscriptionGroupLocFields, k))
 			}
+		}
+	}
+	for _, l := range sortedKeys(m.BetaApp) {
+		for _, k := range sortedKeys(m.BetaBuild[l]) {
+			checkValue(&problems, &warnings, "testflight/"+l, k, m.BetaBuild[l][k], limitOf(betaBuildFields, k))
+		}
+		for _, k := range sortedKeys(m.BetaApp[l]) {
+			checkValue(&problems, &warnings, "testflight/"+l, k, m.BetaApp[l][k], limitOf(betaAppFields, k))
 		}
 	}
 	return problems, warnings

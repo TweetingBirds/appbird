@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"strings"
@@ -50,6 +51,10 @@ type Remote struct {
 	EULA            *Resource
 	Subscriptions   map[string]*remoteSubscription // product id
 	Groups          map[string]*remoteGroup        // reference name
+	Build           *Resource                      // the TestFlight build "What to Test" goes to
+	BuildVersion    string                         // its version (CFBundleShortVersionString)
+	BuildLocs       map[string]*Resource           // betaBuildLocalizations by locale
+	BetaAppLocs     map[string]*Resource           // betaAppLocalizations by locale
 }
 
 func (r *Remote) VersionString() string { return r.Version.Str("versionString") }
@@ -62,7 +67,9 @@ func byLocale(items []*Resource) map[string]*Resource {
 	return m
 }
 
-func fetchRemote(c *Client, cfg Config, versionString string, withSubscriptions bool) (*Remote, error) {
+// fetchRemote reads the app's App Store state. full adds subscriptions and TestFlight, which
+// the text commands need and status and media don't.
+func fetchRemote(c *Client, cfg Config, versionString, buildNumber string, full bool) (*Remote, error) {
 	apps, err := c.List("/v1/apps", url.Values{"filter[bundleId]": {cfg.BundleID}})
 	if err != nil {
 		return nil, err
@@ -78,7 +85,8 @@ func fetchRemote(c *Client, cfg Config, versionString string, withSubscriptions 
 		return nil, userErr("No app with bundle ID %s is visible to this API key.", cfg.BundleID)
 	}
 	r := &Remote{App: app, VersionLocs: map[string]*Resource{}, AppInfoLocs: map[string]*Resource{},
-		Subscriptions: map[string]*remoteSubscription{}, Groups: map[string]*remoteGroup{}}
+		Subscriptions: map[string]*remoteSubscription{}, Groups: map[string]*remoteGroup{},
+		BuildLocs: map[string]*Resource{}, BetaAppLocs: map[string]*Resource{}}
 
 	if r.Versions, err = c.List("/v1/apps/"+app.ID+"/appStoreVersions", url.Values{"filter[platform]": {cfg.Platform}}); err != nil {
 		return nil, err
@@ -142,9 +150,24 @@ func fetchRemote(c *Client, cfg Config, versionString string, withSubscriptions 
 	if r.EULA, err = c.GetOne("/v1/apps/" + app.ID + "/endUserLicenseAgreement"); err != nil {
 		return nil, err
 	}
-	if !withSubscriptions {
+	if !full {
 		return r, nil
 	}
+	if r.Build, r.BuildVersion, err = fetchBuild(c, cfg, app.ID, versionString, buildNumber); err != nil {
+		return nil, err
+	}
+	if r.Build != nil {
+		locs, err := c.List("/v1/builds/"+r.Build.ID+"/betaBuildLocalizations", nil)
+		if err != nil {
+			return nil, err
+		}
+		r.BuildLocs = byLocale(locs)
+	}
+	betaLocs, err := c.List("/v1/apps/"+app.ID+"/betaAppLocalizations", nil)
+	if err != nil {
+		return nil, err
+	}
+	r.BetaAppLocs = byLocale(betaLocs)
 	groups, err := c.List("/v1/apps/"+app.ID+"/subscriptionGroups", nil)
 	if err != nil {
 		return nil, err
@@ -172,6 +195,63 @@ func fetchRemote(c *Client, cfg Config, versionString string, withSubscriptions 
 		}
 	}
 	return r, nil
+}
+
+// fetchBuild finds the newest unexpired TestFlight build on the config's platform: of one
+// version if versionString is set, and with one build number if buildNumber is set.
+// It returns nil when there isn't one.
+func fetchBuild(c *Client, cfg Config, appID, versionString, buildNumber string) (*Resource, string, error) {
+	params := url.Values{
+		"filter[app]":                        {appID},
+		"filter[preReleaseVersion.platform]": {cfg.Platform},
+		"filter[expired]":                    {"false"},
+		"sort":                               {"-uploadedDate"},
+		"include":                            {"preReleaseVersion"},
+		"limit":                              {"1"},
+	}
+	if versionString != "" {
+		params.Set("filter[preReleaseVersion.version]", versionString)
+	}
+	if buildNumber != "" {
+		params.Set("filter[version]", buildNumber)
+	}
+	// One page only: the first result is the newest.
+	doc, err := c.do("GET", "/v1/builds", params, nil)
+	if err == errNotFound {
+		return nil, "", nil
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	var builds []*Resource
+	if len(doc.Data) > 0 && doc.Data[0] == '[' {
+		if err := json.Unmarshal(doc.Data, &builds); err != nil {
+			return nil, "", err
+		}
+	}
+	if len(builds) == 0 {
+		return nil, "", nil
+	}
+	b, v := builds[0], versionString
+	if _, id := b.Related("preReleaseVersion"); id != "" {
+		for _, inc := range doc.Included {
+			if inc.Type == "preReleaseVersions" && inc.ID == id {
+				v = inc.Str("version")
+			}
+		}
+	}
+	return b, v, nil
+}
+
+// buildLabel names the TestFlight build the way App Store Connect shows it: "1.2 (45)".
+func (r *Remote) buildLabel() string {
+	if r.Build == nil {
+		return ""
+	}
+	if r.BuildVersion == "" {
+		return "build " + r.Build.Str("version")
+	}
+	return fmt.Sprintf("%s (%s)", r.BuildVersion, r.Build.Str("version"))
 }
 
 func (r *Remote) describe() string {

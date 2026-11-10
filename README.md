@@ -1,6 +1,6 @@
 # Appbird
 
-Keep your App Store listing in your repo. Appbird compares plain text files (and, if you want, your screenshots and artwork) with App Store Connect, shows you the difference, and writes it through the App Store Connect API when you say so.
+Keep your App Store listing in your repo. Appbird compares plain text files (and, if you want, your screenshots and artwork) with App Store Connect and TestFlight, shows you the difference, and writes it through the App Store Connect API when you say so.
 
 ```
 $ appbird diff
@@ -20,7 +20,7 @@ Done: 2 change(s) written. Nothing was submitted for review.
 ```
 
 - **One binary, no dependencies.** A single static executable for macOS (Apple silicon and Intel), Linux and Windows. No Ruby, no gems, no Python, no OpenSSL.
-- **Safe by default.** `diff` only reads. `push` shows the diff and asks first. Appbird never submits anything for review, never releases a version, never deletes a localization, and never touches prices, availability, or your App Review contact details.
+- **Safe by default.** `diff` only reads. `push` shows the diff and asks first. Appbird never submits anything for review (App Review or TestFlight's Beta App Review), never releases a version, never adds or removes testers, never deletes a localization, and never touches prices, availability, or your App Review contact details.
 - **fastlane-compatible layout.** The text files use fastlane deliver's names (`metadata/en-US/description.txt`), so you can move between the two.
 - **Works for any app.** One small `appbird.json` per app repo, and one per platform if it ships on iOS, macOS, tvOS or visionOS.
 - **Easy to hand to an AI agent.** Copy-paste prompts below [set it up for you](#set-it-up-with-an-ai-agent).
@@ -103,9 +103,10 @@ appbird media diff -c appbird.macos.json --app-version 2.0
 |---|---|
 | `description`, `keywords`, `promotional_text`, `release_notes`, `support_url`, `marketing_url` | `name`, `subtitle`, `privacy_url`, `privacy_choices_url` (App Info) |
 | `copyright.txt`, `review_information/notes.txt` | `eula.txt` |
+| `testflight/<locale>/what_to_test.txt` (goes to that platform's newest build) | the rest of `testflight/<locale>/`: `description`, `feedback_email`, `marketing_url`, `privacy_url` (TestFlight test information) |
 | `screenshots/`, `previews/`, and where creative assets are placed | `subscriptions/`, `subscription_groups/`, and the Asset Library that creative assets are uploaded to |
 
-Keep each shared file in **one** metadata folder only. `pull` writes every file into whichever folder you pulled into, so after pulling the second platform, delete its copies of the shared files (`name.txt`, `subtitle.txt`, the privacy URLs, `eula.txt`, `subscriptions/`, `subscription_groups/`). A missing file isn't managed, so the other config keeps owning them. If both folders keep a shared file and the two copies differ, each `push` overwrites the other's text.
+Keep each shared file in **one** metadata folder only. `pull` writes every file into whichever folder you pulled into, so after pulling the second platform, delete its copies of the shared files (`name.txt`, `subtitle.txt`, the privacy URLs, `eula.txt`, `subscriptions/`, `subscription_groups/`, and every file in `testflight/<locale>/` except `what_to_test.txt`). A missing file isn't managed, so the other config keeps owning them. If both folders keep a shared file and the two copies differ, each `push` overwrites the other's text.
 
 Things Appbird doesn't check for you:
 
@@ -209,16 +210,16 @@ pull request. Don't run `appbird push`.
 |---|---|
 | `appbird init <bundle id> [--platform X]` | Write `appbird.json` here, or `appbird.<platform>.json` for a platform other than iOS. |
 | `appbird validate` | Check the files offline: character limits, URLs, locale codes, stray files. No key needed. |
-| `appbird status` | List the app's versions and their states. |
-| `appbird diff [--exit-code]` | Show what differs. Read-only. `--exit-code` exits 2 when something differs. |
+| `appbird status` | List the app's versions and their states, and the newest TestFlight build. |
+| `appbird diff [--exit-code]` | Show what differs, App Store and TestFlight text. Read-only. `--exit-code` exits 2 when something differs. |
 | `appbird push [--yes]` | Show the diff, ask, then write it. `--yes` skips the question (needed off a terminal). |
 | `appbird pull [--locale xx]` | Overwrite the repo's files with App Store Connect's text. Review with `git diff`. |
 | `appbird media validate\|diff\|push` | The same for screenshots, app previews and creative assets. See [Media](#media). |
 | `appbird version` | Print the version. |
 
-`diff`, `push`, `pull` and `media` take `--app-version 1.2` to pick a version. By default Appbird uses the version you're preparing, or the live one if there isn't one.
+`diff`, `push`, `pull` and `media` take `--app-version 1.2` to pick a version. By default Appbird uses the version you're preparing, or the live one if there isn't one. `diff`, `push` and `pull` also take `--build 45` to pick a TestFlight build. See [TestFlight](#testflight).
 
-**What can change when.** Apple only accepts most edits while a version is being prepared (or after it was rejected). With only a live version, `push` writes the promotional text, subscription copy and the EULA, and lists everything else as waiting. Create the next version in App Store Connect and push again.
+**What can change when.** Apple only accepts most edits while a version is being prepared (or after it was rejected). With only a live version, `push` writes the promotional text, subscription copy, the EULA and TestFlight text, and lists everything else as waiting. Create the next version in App Store Connect and push again.
 
 ## Files
 
@@ -252,6 +253,13 @@ metadata/
 │       └── en-US/
 │           ├── name.txt
 │           └── custom_app_name.txt
+├── testflight/                        see TestFlight
+│   └── en-US/
+│       ├── what_to_test.txt           "What to Test" for the newest build, 4000
+│       ├── description.txt            beta app description, 4000
+│       ├── feedback_email.txt
+│       ├── marketing_url.txt
+│       └── privacy_url.txt
 ├── screenshots/ previews/ creative_assets/   see Media
 ```
 
@@ -264,6 +272,17 @@ Rules:
 - Trailing whitespace and the final newline are ignored, so editors can't create false diffs.
 - Folder names are App Store Connect's listing locales: `en-US`, `de-DE`, `fr-FR`, `it`, `ja`, `pt-BR`, `es-ES`, `es-MX` (Latin America), `zh-Hant`, and so on.
 - Review contact details (name, phone, email) and demo account credentials stay in App Store Connect on purpose, so they never land in a repo.
+
+## TestFlight
+
+`metadata/testflight/<locale>/` holds what testers see in TestFlight. A text `push` writes it along with the rest of the listing, and `diff` shows it. TestFlight text can change at any time, so it doesn't wait for an editable App Store version.
+
+- **`what_to_test.txt`** is the "What to Test" note. It belongs to one build, so Appbird writes it to the **newest build** on the config's platform (the most recently uploaded one that hasn't expired). `diff` names the build, for example `TestFlight build 1.3 (52)`. `--app-version 1.3` picks the newest build of version 1.3 (it picks the App Store version too, so that version has to exist in App Store Connect), and `--build 52` picks build 52 of any version.
+- **`description.txt`, `feedback_email.txt`, `marketing_url.txt` and `privacy_url.txt`** are the app's TestFlight test information (the beta app description, the address tester feedback goes to, and the links). They belong to the app, not to a build, so every build and platform shares them.
+
+A typical release: upload the build, update `what_to_test.txt` in a pull request, then `appbird push` once the build shows up in App Store Connect. If the new build isn't there yet, `diff` still names the previous one, so check the build number before you push. Each new build starts with no notes, so the first `push` after an upload writes them to it. When there's no build at all, `diff` lists the notes as waiting.
+
+`pull` writes the newest build's notes and the test information (empty URLs are skipped). Beta App Review contact details and test groups stay in App Store Connect, and Appbird never submits a build to Beta App Review or adds it to a group.
 
 ## Media
 

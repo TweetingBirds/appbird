@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 type recorded struct {
 	Method, Path string
 	Body         map[string]any
+	Query        url.Values
 }
 
 // fakeASC is a tiny in-memory App Store Connect with one app.
@@ -54,8 +56,15 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			{"subscriptionLocalizations", "sl1"}:      {"locale": "en-US", "name": "Annual", "description": "Old"},
 			{"endUserLicenseAgreements", "eula1"}:     {"agreementText": "Old EULA"},
 			{"appAssetLibraries", "lib1"}:             {},
+			{"builds", "b1"}:                          {"version": "45", "processingState": "VALID", "expired": false},
+			{"preReleaseVersions", "p1"}:              {"version": "1.1", "platform": "IOS"},
+			{"betaBuildLocalizations", "bbl1"}:        {"locale": "en-US", "whatsNew": "Old test notes"},
+			{"betaAppLocalizations", "bal1"}: {"locale": "en-US", "description": "Old beta description",
+				"feedbackEmail": "beta@example.com", "marketingUrl": nil, "privacyPolicyUrl": nil},
 		},
-		rels:    map[[2]string]map[string]any{},
+		rels: map[[2]string]map[string]any{
+			{"builds", "b1"}: {"preReleaseVersion": map[string]any{"data": map[string]any{"type": "preReleaseVersions", "id": "p1"}}},
+		},
 		uploads: map[string][]byte{},
 		children: map[string][]string{
 			"/v1/apps":                       {"app1"},
@@ -67,6 +76,9 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			"/v1/subscriptionGroups/g1/subscriptionGroupLocalizations": {"gl1"},
 			"/v1/subscriptionGroups/g1/subscriptions":                  {"s1"},
 			"/v1/subscriptions/s1/subscriptionLocalizations":           {"sl1"},
+			"/v1/builds":                           {"b1"},
+			"/v1/builds/b1/betaBuildLocalizations": {"bbl1"},
+			"/v1/apps/app1/betaAppLocalizations":   {"bal1"},
 		},
 		single: map[string]string{
 			"/v1/appStoreVersions/v1/appStoreReviewDetail": "rd1",
@@ -85,6 +97,9 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			"/v1/appStoreVersions/v1/appStoreReviewDetail":             "appStoreReviewDetails",
 			"/v1/apps/app1/endUserLicenseAgreement":                    "endUserLicenseAgreements",
 			"/v1/apps/app1/assetLibrary":                               "appAssetLibraries",
+			"/v1/builds":                                               "builds",
+			"/v1/builds/b1/betaBuildLocalizations":                     "betaBuildLocalizations",
+			"/v1/apps/app1/betaAppLocalizations":                       "betaAppLocalizations",
 		},
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
@@ -151,7 +166,7 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "" {
 			f.sawAuthOnUpload = true
 		}
-		f.requests = append(f.requests, recorded{r.Method, path, nil})
+		f.requests = append(f.requests, recorded{r.Method, path, nil, r.URL.Query()})
 		f.uploads[parts[1]] = raw
 		reply(w, 200, nil)
 		return
@@ -164,7 +179,7 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &body)
 	}
-	f.requests = append(f.requests, recorded{r.Method, path, body})
+	f.requests = append(f.requests, recorded{r.Method, path, body, r.URL.Query()})
 
 	switch r.Method {
 	case "GET":
