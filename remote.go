@@ -38,6 +38,7 @@ type remoteGroup struct {
 
 // Remote is App Store Connect's current state for one app and version.
 type Remote struct {
+	Platform        string
 	App             *Resource
 	Versions        []*Resource
 	Version         *Resource
@@ -80,7 +81,7 @@ func fetchRemote(c *Client, cfg Config, versionString string, withProducts bool)
 	if app == nil {
 		return nil, userErr("No app with bundle ID %s is visible to this API key.", cfg.BundleID)
 	}
-	r := &Remote{App: app, VersionLocs: map[string]*Resource{}, AppInfoLocs: map[string]*Resource{},
+	r := &Remote{Platform: cfg.Platform, App: app, VersionLocs: map[string]*Resource{}, AppInfoLocs: map[string]*Resource{},
 		Subscriptions: map[string]*remoteSubscription{}, Groups: map[string]*remoteGroup{},
 		InAppPurchases: map[string]*remoteSubscription{}, Categories: map[string]string{}}
 

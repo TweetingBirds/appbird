@@ -27,8 +27,8 @@ Usage:
   appbird init <bundle id> [--platform IOS]   write appbird.json here (appbird.macos.json
                                               for MAC_OS, and so on)
   appbird validate                            check metadata/ offline (limits, URLs, locales)
-  appbird status                              list the app's versions and which one is editable
-  appbird diff  [--app-version X.Y] [--exit-code]
+  appbird status [--json]                     list the app's versions and which one is editable
+  appbird diff  [--app-version X.Y] [--exit-code] [--json]
                                               show what differs (read-only)
   appbird push  [--app-version X.Y] [--yes]   write the repo's text to App Store Connect
   appbird pull  [--app-version X.Y] [--locale xx]
@@ -46,7 +46,7 @@ API key: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY_PATH or ASC_PRIVATE_KEY.
 
 type options struct {
 	config, appVersion, platform string
-	verbose, yes, exitCode       bool
+	verbose, yes, exitCode, json bool
 	locales, only                multiFlag
 	args                         []string
 }
@@ -70,6 +70,7 @@ func parseOptions(name string, args []string, stderr io.Writer) (*options, error
 	fs.BoolVar(&o.yes, "y", false, "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.exitCode, "exit-code", false, "")
+	fs.BoolVar(&o.json, "json", false, "")
 	fs.Var(&o.locales, "locale", "")
 	fs.Var(&o.only, "only", "")
 	// Allow flags before and after positional arguments.
@@ -96,6 +97,7 @@ type app struct {
 	in       io.Reader
 	out, err io.Writer
 	isTTY    bool
+	json     bool // print status and diffs as JSON
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -112,6 +114,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+	if o.json {
+		jsonOK := cmd == "status" || cmd == "diff" || (cmd == "media" && len(o.args) == 1 && o.args[0] == "diff")
+		if !jsonOK {
+			fmt.Fprintln(stderr, "appbird: --json works with status, diff and media diff")
+			return 2
+		}
+		a.json = true
 	}
 	var code int
 	switch cmd {
@@ -238,6 +248,9 @@ func (a *app) cmdStatus(o *options) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	if a.json {
+		return 0, a.printJSON(statusJSON(r))
+	}
 	fmt.Fprintf(a.out, "%s (%s), app ID %s\n", r.App.Str("name"), cfg.BundleID, r.App.ID)
 	for _, v := range r.Versions {
 		state, tag := versionState(v), ""
@@ -252,12 +265,25 @@ func (a *app) cmdStatus(o *options) (int, error) {
 	return 0, nil
 }
 
+func (a *app) printJSON(v any) error {
+	raw, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(a.out, string(raw))
+	return err
+}
+
 // show prints the plan and mirrors it into the GitHub Actions job summary, if there is one.
 func (a *app) show(p *Plan, r *Remote) {
 	var buf bytes.Buffer
 	printPlan(&buf, p, r)
 	text := strings.TrimRight(buf.String(), "\n")
-	fmt.Fprintln(a.out, text)
+	if a.json {
+		_ = a.printJSON(planJSON(p, r))
+	} else {
+		fmt.Fprintln(a.out, text)
+	}
 	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" {
 		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			fmt.Fprintf(f, "```\n%s\n```\n", text)

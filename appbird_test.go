@@ -392,6 +392,30 @@ func TestCreateVersion(t *testing.T) {
 	contains(t, stderr, "Version 1.1 is already being prepared")
 }
 
+func TestJSONOutput(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	code, out, _ := e.run("status", "--json")
+	must(t, code == 0, "exit %d", code)
+	var status jsonStatus
+	must(t, json.Unmarshal([]byte(out), &status) == nil, "status is JSON:\n%s", out)
+	must(t, status.App.BundleID == "com.example.app" && status.App.Platform == "IOS", "app %+v", status.App)
+	must(t, len(status.Versions) == 1 && status.Versions[0].Live && !status.Versions[0].Editable, "versions %+v", status.Versions)
+
+	e.write("en-US/promotional_text.txt", "New promo\n")
+	e.write("en-US/subtitle.txt", "New subtitle\n")
+	code, out, _ = e.run("diff", "--json", "--exit-code")
+	must(t, code == 2, "exit %d", code)
+	var plan jsonPlan
+	must(t, json.Unmarshal([]byte(out), &plan) == nil, "diff is JSON:\n%s", out)
+	must(t, plan.Differs && plan.ChangeCount == 1 && plan.Version.Version == "1.0", "plan %+v", plan)
+	must(t, plan.Steps[0].Changes[0].Field == "en-US/promotional_text" && plan.Steps[0].Changes[0].New == "New promo", "steps %+v", plan.Steps)
+	must(t, len(plan.Waiting) == 1 && plan.Waiting[0].Field == "en-US/subtitle" && plan.Waiting[0].Reason != "", "waiting %+v", plan.Waiting)
+
+	code, _, stderr := e.run("push", "--json")
+	must(t, code == 2, "push --json: exit %d", code)
+	contains(t, stderr, "--json works with status, diff and media diff")
+}
+
 // ---- failures -------------------------------------------------------------------------------
 
 func TestPushRetriesAPatchAfterAServerError(t *testing.T) {
