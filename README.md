@@ -209,16 +209,21 @@ pull request. Don't run `appbird push`.
 |---|---|
 | `appbird init <bundle id> [--platform X]` | Write `appbird.json` here, or `appbird.<platform>.json` for a platform other than iOS. |
 | `appbird validate` | Check the files offline: character limits, URLs, locale codes, stray files. No key needed. |
-| `appbird status` | List the app's versions and their states. |
-| `appbird diff [--exit-code]` | Show what differs. Read-only. `--exit-code` exits 2 when something differs. |
+| `appbird status [--json]` | List the app's versions and their states. |
+| `appbird diff [--exit-code] [--json]` | Show what differs. Read-only. `--exit-code` exits 2 when something differs. |
 | `appbird push [--yes]` | Show the diff, ask, then write it. `--yes` skips the question (needed off a terminal). |
 | `appbird pull [--locale xx]` | Overwrite the repo's files with App Store Connect's text. Review with `git diff`. |
-| `appbird media validate\|diff\|push` | The same for screenshots, app previews and creative assets. See [Media](#media). |
+| `appbird media validate\|diff\|push\|pull` | The same for screenshots, app previews and creative assets. See [Media](#media). |
+| `appbird create-version <1.2> [--yes]` | Create the next App Store version, so you can push to it. Asks first. |
 | `appbird version` | Print the version. |
 
 `diff`, `push`, `pull` and `media` take `--app-version 1.2` to pick a version. By default Appbird uses the version you're preparing, or the live one if there isn't one.
 
-**What can change when.** Apple only accepts most edits while a version is being prepared (or after it was rejected). With only a live version, `push` writes the promotional text, subscription copy and the EULA, and lists everything else as waiting. Create the next version in App Store Connect and push again.
+**What can change when.** Apple only accepts most edits while a version is being prepared (or after it was rejected). With only a live version, `push` writes the promotional text, subscription copy and the EULA, and lists everything else as waiting. Run `appbird create-version 1.2` (Apple copies the live version's text into it) and push again.
+
+**If a push stops partway.** Appbird writes one step at a time and stops at the first one that fails. It then lists the steps it wrote and the ones it didn't. Every run works from App Store Connect's current state, so `appbird diff` shows what's left and `appbird push` again finishes the job. Appbird never sends a create twice on its own, so a dropped connection can't make a duplicate; if the failed step was a create, it tells you it may or may not have gone through.
+
+**For scripts.** `status --json`, `diff --json` and `media diff --json` print JSON instead of text: the app, the chosen version, each `steps[]` entry with its `changes[]` (`field`, `old`, `new`), the `waiting[]` changes with a `reason`, and `notes[]`. Warnings go to stderr. These field names won't change within a major version.
 
 ## Files
 
@@ -227,6 +232,7 @@ appbird.json
 metadata/
 ├── copyright.txt                      © 2026 Example LLC
 ├── eula.txt                           custom EULA text (only updates one that exists)
+├── app_info.json                      categories, age rating, content rights (see below)
 ├── review_information/
 │   └── notes.txt                      App Review notes
 ├── en-US/
@@ -252,6 +258,12 @@ metadata/
 │       └── en-US/
 │           ├── name.txt
 │           └── custom_app_name.txt
+├── in_app_purchases/                  consumables, non-consumables, non-renewing subscriptions
+│   └── com.example.coins.100/
+│       ├── review_note.txt
+│       └── en-US/
+│           ├── name.txt               35
+│           └── description.txt        55
 ├── screenshots/ previews/ creative_assets/   see Media
 ```
 
@@ -264,6 +276,31 @@ Rules:
 - Trailing whitespace and the final newline are ignored, so editors can't create false diffs.
 - Folder names are App Store Connect's listing locales: `en-US`, `de-DE`, `fr-FR`, `it`, `ja`, `pt-BR`, `es-ES`, `es-MX` (Latin America), `zh-Hant`, and so on.
 - Review contact details (name, phone, email) and demo account credentials stay in App Store Connect on purpose, so they never land in a repo.
+- Subscriptions and in-app purchases must already exist in App Store Connect. Appbird keeps their text in sync but doesn't create products or set prices.
+
+### app_info.json
+
+The App Info settings that aren't per-locale text live in one JSON file. Every key is optional, and a missing key isn't managed:
+
+```json
+{
+  "primary_category": "GAMES",
+  "primary_subcategory_one": "GAMES_PUZZLE",
+  "secondary_category": "EDUCATION",
+  "content_rights": "DOES_NOT_USE_THIRD_PARTY_CONTENT",
+  "age_rating": {
+    "violenceCartoonOrFantasy": "INFREQUENT",
+    "gambling": false,
+    "lootBox": false
+  }
+}
+```
+
+- **Categories** take App Store Connect's category IDs (`PRODUCTIVITY`, `GAMES_PUZZLE`, …). `null` clears a secondary category. There are also `primary_subcategory_two`, `secondary_subcategory_one` and `secondary_subcategory_two` for games and stickers.
+- **`age_rating`** holds Apple's age rating questionnaire, using the attribute names and values of the API's `ageRatingDeclarations`. Appbird sends what you write as is, so questions Apple adds later work without an Appbird update. Only the attributes you list are compared. `appbird pull` writes every attribute Apple returns, which is the easiest way to start.
+- **`content_rights`** is `DOES_NOT_USE_THIRD_PARTY_CONTENT` or `USES_THIRD_PARTY_CONTENT`.
+
+Categories and the age rating change only while a version is being prepared. Content rights can change at any time.
 
 ## Media
 
@@ -295,7 +332,7 @@ How syncing works:
 - **Creative assets** go into the app's Asset Library once (named `appbird-<md5>`) and are placed on each locale's product page. A changed file gets a new placement, and the old placement is removed. Apple reviews creative assets on their own. Appbird places them but doesn't submit them, so submit them from App Store Connect › Asset Library.
 - Folder names are Apple's API values (`APP_IPHONE_67` is the 6.9" and 6.7" iPhone, `APP_IPAD_PRO_3GEN_129` the 13" iPad). iPhone Duo (`APP_IPHONE_DUO`, `IPHONE_DUO`) isn't in Apple's published API reference yet, but the live API is reported to accept it, so Appbird lets you try it with a warning.
 - `appbird media diff` shows exactly what would be uploaded and removed. Run it before every `media push`.
-- There is no media `pull` yet.
+- **`appbird media pull`** downloads the version's screenshots and previews into these folders, named `01-…`, `02-…` in App Store Connect's order. A set that already matches is left alone; one that differs is replaced. Apple re-encodes everything it stores, so these aren't your original files: pull records which upload each download stands for in `.appbird-sources.json` in the set's folder, so `media diff` right after a pull is clean. Commit that file with the images. Edit a pulled file and it counts as a new upload. Creative assets can't be pulled yet.
 
 ## In CI
 

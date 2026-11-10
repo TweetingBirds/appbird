@@ -440,7 +440,7 @@ func setOperation(k mediaKind, loc, typ string, files []string, remote *remoteSe
 	var local []localFile
 	localSums := map[string]bool{}
 	for _, f := range files {
-		sum, err := fileMD5(f)
+		sum, err := sourceChecksum(f)
 		if err != nil {
 			return nil, err
 		}

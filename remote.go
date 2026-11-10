@@ -38,6 +38,7 @@ type remoteGroup struct {
 
 // Remote is App Store Connect's current state for one app and version.
 type Remote struct {
+	Platform        string
 	App             *Resource
 	Versions        []*Resource
 	Version         *Resource
@@ -50,6 +51,9 @@ type Remote struct {
 	EULA            *Resource
 	Subscriptions   map[string]*remoteSubscription // product id
 	Groups          map[string]*remoteGroup        // reference name
+	InAppPurchases  map[string]*remoteSubscription // product id; Sub is the in-app purchase
+	Categories      map[string]string              // app_info.json key -> category ID
+	AgeRating       *Resource
 }
 
 func (r *Remote) VersionString() string { return r.Version.Str("versionString") }
@@ -62,7 +66,7 @@ func byLocale(items []*Resource) map[string]*Resource {
 	return m
 }
 
-func fetchRemote(c *Client, cfg Config, versionString string, withSubscriptions bool) (*Remote, error) {
+func fetchRemote(c *Client, cfg Config, versionString string, withProducts bool) (*Remote, error) {
 	apps, err := c.List("/v1/apps", url.Values{"filter[bundleId]": {cfg.BundleID}})
 	if err != nil {
 		return nil, err
@@ -77,8 +81,9 @@ func fetchRemote(c *Client, cfg Config, versionString string, withSubscriptions 
 	if app == nil {
 		return nil, userErr("No app with bundle ID %s is visible to this API key.", cfg.BundleID)
 	}
-	r := &Remote{App: app, VersionLocs: map[string]*Resource{}, AppInfoLocs: map[string]*Resource{},
-		Subscriptions: map[string]*remoteSubscription{}, Groups: map[string]*remoteGroup{}}
+	r := &Remote{Platform: cfg.Platform, App: app, VersionLocs: map[string]*Resource{}, AppInfoLocs: map[string]*Resource{},
+		Subscriptions: map[string]*remoteSubscription{}, Groups: map[string]*remoteGroup{},
+		InAppPurchases: map[string]*remoteSubscription{}, Categories: map[string]string{}}
 
 	if r.Versions, err = c.List("/v1/apps/"+app.ID+"/appStoreVersions", url.Values{"filter[platform]": {cfg.Platform}}); err != nil {
 		return nil, err
@@ -142,8 +147,11 @@ func fetchRemote(c *Client, cfg Config, versionString string, withSubscriptions 
 	if r.EULA, err = c.GetOne("/v1/apps/" + app.ID + "/endUserLicenseAgreement"); err != nil {
 		return nil, err
 	}
-	if !withSubscriptions {
+	if !withProducts {
 		return r, nil
+	}
+	if err := fetchAppInfoSettings(c, r); err != nil {
+		return nil, err
 	}
 	groups, err := c.List("/v1/apps/"+app.ID+"/subscriptionGroups", nil)
 	if err != nil {
@@ -170,6 +178,22 @@ func fetchRemote(c *Client, cfg Config, versionString string, withSubscriptions 
 			}
 			r.Subscriptions[s.Str("productId")] = &remoteSubscription{Sub: s, Locs: byLocale(slocs)}
 		}
+	}
+	// Consumables, non-consumables and non-renewing subscriptions. Auto-renewable subscriptions
+	// come back here too; they're handled above.
+	iaps, err := c.List("/v1/apps/"+app.ID+"/inAppPurchasesV2", nil)
+	if err != nil {
+		return nil, err
+	}
+	for _, i := range iaps {
+		if i.Str("inAppPurchaseType") == "AUTOMATICALLY_RENEWABLE_SUBSCRIPTION" {
+			continue
+		}
+		locs, err := c.List("/v2/inAppPurchases/"+i.ID+"/inAppPurchaseLocalizations", nil)
+		if err != nil {
+			return nil, err
+		}
+		r.InAppPurchases[i.Str("productId")] = &remoteSubscription{Sub: i, Locs: byLocale(locs)}
 	}
 	return r, nil
 }

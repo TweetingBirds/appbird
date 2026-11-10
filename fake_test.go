@@ -29,6 +29,20 @@ type fakeASC struct {
 	uploads         map[string][]byte
 	created         int
 	sawAuthOnUpload bool
+	// fail makes the next n requests to "METHOD /path" fail: status > 0 answers with that
+	// status, status -1 drops the connection.
+	fail map[string]*failure
+}
+
+type failure struct{ status, times int }
+
+func (f *fakeASC) failNext(method, path string, status, times int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail == nil {
+		f.fail = map[string]*failure{}
+	}
+	f.fail[method+" "+path] = &failure{status, times}
 }
 
 var segment = map[string]string{"appAssetLibraryImages": "images", "appAssetLibraryVideos": "videos",
@@ -54,6 +68,12 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			{"subscriptionLocalizations", "sl1"}:      {"locale": "en-US", "name": "Annual", "description": "Old"},
 			{"endUserLicenseAgreements", "eula1"}:     {"agreementText": "Old EULA"},
 			{"appAssetLibraries", "lib1"}:             {},
+			{"ageRatingDeclarations", "ar1"}: {"violenceCartoonOrFantasy": "NONE", "gambling": false,
+				"unrestrictedWebAccess": false, "kidsAgeBand": nil},
+			{"inAppPurchases", "iap1"}: {"productId": "com.example.coins", "name": "Coins",
+				"inAppPurchaseType": "CONSUMABLE", "reviewNote": "Old coin note"},
+			{"inAppPurchases", "s1"}:                {"productId": "com.example.annual", "inAppPurchaseType": "AUTOMATICALLY_RENEWABLE_SUBSCRIPTION"},
+			{"inAppPurchaseLocalizations", "iapl1"}: {"locale": "en-US", "name": "100 Coins", "description": "A pile of coins"},
 		},
 		rels:    map[[2]string]map[string]any{},
 		uploads: map[string][]byte{},
@@ -67,11 +87,14 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			"/v1/subscriptionGroups/g1/subscriptionGroupLocalizations": {"gl1"},
 			"/v1/subscriptionGroups/g1/subscriptions":                  {"s1"},
 			"/v1/subscriptions/s1/subscriptionLocalizations":           {"sl1"},
+			"/v1/apps/app1/inAppPurchasesV2":                           {"iap1", "s1"},
+			"/v1/inAppPurchases/iap1/inAppPurchaseLocalizations":       {"iapl1"},
 		},
 		single: map[string]string{
 			"/v1/appStoreVersions/v1/appStoreReviewDetail": "rd1",
 			"/v1/apps/app1/endUserLicenseAgreement":        "eula1",
 			"/v1/apps/app1/assetLibrary":                   "lib1",
+			"/v1/appInfos/i1/ageRatingDeclaration":         "ar1",
 		},
 		types: map[string]string{
 			"/v1/apps": "apps", "/v1/apps/app1/appStoreVersions": "appStoreVersions",
@@ -82,9 +105,12 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			"/v1/subscriptionGroups/g1/subscriptionGroupLocalizations": "subscriptionGroupLocalizations",
 			"/v1/subscriptionGroups/g1/subscriptions":                  "subscriptions",
 			"/v1/subscriptions/s1/subscriptionLocalizations":           "subscriptionLocalizations",
+			"/v1/apps/app1/inAppPurchasesV2":                           "inAppPurchases",
+			"/v1/inAppPurchases/iap1/inAppPurchaseLocalizations":       "inAppPurchaseLocalizations",
 			"/v1/appStoreVersions/v1/appStoreReviewDetail":             "appStoreReviewDetails",
 			"/v1/apps/app1/endUserLicenseAgreement":                    "endUserLicenseAgreements",
 			"/v1/apps/app1/assetLibrary":                               "appAssetLibraries",
+			"/v1/appInfos/i1/ageRatingDeclaration":                     "ageRatingDeclarations",
 		},
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
@@ -145,8 +171,20 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	path := r.URL.Path
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+	// Resources under /v2 are stored with the /v1 ones.
+	store := strings.Replace(path, "/v2/", "/v1/", 1)
+	parts := strings.Split(strings.Trim(store, "/"), "/")
 	raw, _ := io.ReadAll(r.Body)
+	if parts[0] == "asset" {
+		// Apple's CDN serves a re-encoded copy, never the uploaded bytes.
+		f.requests = append(f.requests, recorded{r.Method, path, nil})
+		if r.Header.Get("Authorization") != "" {
+			f.sawAuthOnUpload = true
+		}
+		w.WriteHeader(200)
+		w.Write(append(append([]byte{}, f.uploads[parts[1]]...), []byte("re-encoded "+parts[2])...))
+		return
+	}
 	if parts[0] == "upload" {
 		if r.Header.Get("Authorization") != "" {
 			f.sawAuthOnUpload = true
@@ -165,21 +203,33 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(raw, &body)
 	}
 	f.requests = append(f.requests, recorded{r.Method, path, body})
+	if fl := f.fail[r.Method+" "+path]; fl != nil && fl.times > 0 {
+		fl.times--
+		if fl.status < 0 {
+			if hj, ok := w.(http.Hijacker); ok {
+				conn, _, _ := hj.Hijack()
+				conn.Close()
+				return
+			}
+		}
+		reply(w, fl.status, map[string]any{"errors": []any{map[string]any{"title": "Injected failure"}}})
+		return
+	}
 
 	switch r.Method {
 	case "GET":
-		if id, ok := f.single[path]; ok {
-			reply(w, 200, map[string]any{"data": f.resource(f.types[path], id)})
+		if id, ok := f.single[store]; ok {
+			reply(w, 200, map[string]any{"data": f.resource(f.types[store], id)})
 			return
 		}
-		if ids, ok := f.children[path]; ok {
+		if ids, ok := f.children[store]; ok {
 			data := []any{}
 			included := []any{}
 			for _, id := range ids {
-				res := f.resource(f.types[path], id)
+				res := f.resource(f.types[store], id)
 				data = append(data, res)
 				if r.URL.Query().Get("include") != "" {
-					for _, rel := range f.rels[[2]string{f.types[path], id}] {
+					for _, rel := range f.rels[[2]string{f.types[store], id}] {
 						d := rel.(map[string]any)["data"].(map[string]any)
 						included = append(included, f.resource(d["type"].(string), d["id"].(string)))
 					}
@@ -210,7 +260,16 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		key := [2]string{parts[1], parts[2]}
-		attrs := body["data"].(map[string]any)["attributes"].(map[string]any)
+		data := body["data"].(map[string]any)
+		if rels, ok := data["relationships"].(map[string]any); ok {
+			if f.rels[key] == nil {
+				f.rels[key] = map[string]any{}
+			}
+			for k, v := range rels {
+				f.rels[key][k] = v
+			}
+		}
+		attrs, _ := data["attributes"].(map[string]any)
 		for k, v := range attrs {
 			f.resources[key][k] = v
 		}
@@ -218,8 +277,11 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 			switch key[0] {
 			case "appScreenshots":
 				f.resources[key]["assetDeliveryState"] = map[string]any{"state": "COMPLETE"}
+				f.resources[key]["imageAsset"] = map[string]any{"templateUrl": f.server.URL + "/asset/" + key[1] + "/{w}x{h}bb.{f}",
+					"width": 1320, "height": 2868}
 			case "appPreviews":
 				f.resources[key]["videoDeliveryState"] = map[string]any{"state": "COMPLETE"}
+				f.resources[key]["videoUrl"] = f.server.URL + "/asset/" + key[1] + "/video.mp4"
 			default:
 				f.resources[key]["state"] = "PREPARE_FOR_SUBMISSION"
 			}
@@ -260,6 +322,9 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 			attrs["uploadOperations"] = []any{map[string]any{"method": "PUT", "url": f.server.URL + "/upload/" + id,
 				"offset": 0, "length": size, "requestHeaders": []any{map[string]any{"name": "Content-Type", "value": "application/octet-stream"}}}}
 			attrs["state"] = "AWAITING_UPLOAD"
+		}
+		if rtype == "appStoreVersions" {
+			attrs["appVersionState"] = "PREPARE_FOR_SUBMISSION"
 		}
 		if rtype == "appStoreReviewDetails" {
 			f.resources[[2]string{rtype, id}] = attrs
