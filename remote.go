@@ -51,6 +51,8 @@ type Remote struct {
 	Subscriptions   map[string]*remoteSubscription // product id
 	Groups          map[string]*remoteGroup        // reference name
 	InAppPurchases  map[string]*remoteSubscription // product id; Sub is the in-app purchase
+	Categories      map[string]string              // app_info.json key -> category ID
+	AgeRating       *Resource
 }
 
 func (r *Remote) VersionString() string { return r.Version.Str("versionString") }
@@ -80,7 +82,7 @@ func fetchRemote(c *Client, cfg Config, versionString string, withProducts bool)
 	}
 	r := &Remote{App: app, VersionLocs: map[string]*Resource{}, AppInfoLocs: map[string]*Resource{},
 		Subscriptions: map[string]*remoteSubscription{}, Groups: map[string]*remoteGroup{},
-		InAppPurchases: map[string]*remoteSubscription{}}
+		InAppPurchases: map[string]*remoteSubscription{}, Categories: map[string]string{}}
 
 	if r.Versions, err = c.List("/v1/apps/"+app.ID+"/appStoreVersions", url.Values{"filter[platform]": {cfg.Platform}}); err != nil {
 		return nil, err
@@ -146,6 +148,9 @@ func fetchRemote(c *Client, cfg Config, versionString string, withProducts bool)
 	}
 	if !withProducts {
 		return r, nil
+	}
+	if err := fetchAppInfoSettings(c, r); err != nil {
+		return nil, err
 	}
 	groups, err := c.List("/v1/apps/"+app.ID+"/subscriptionGroups", nil)
 	if err != nil {

@@ -286,6 +286,67 @@ func TestInAppPurchasesUpdateCreateAndPull(t *testing.T) {
 	contains(t, stderr, "in_app_purchases/com.example.coins/en-US/description: 56 characters, the limit is 55")
 }
 
+func TestAppInfoCategoriesAgeRatingAndContentRights(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.fake.rels[[2]string{"appInfos", "i1"}] = map[string]any{
+		"primaryCategory":   map[string]any{"data": map[string]any{"type": "appCategories", "id": "PRODUCTIVITY"}},
+		"secondaryCategory": map[string]any{"data": nil},
+	}
+	e.fake.resources[[2]string{"apps", "app1"}]["contentRightsDeclaration"] = "DOES_NOT_USE_THIRD_PARTY_CONTENT"
+	code, _, stderr := e.run("pull")
+	must(t, code == 0, "pull: %s", stderr)
+	got := e.read("app_info.json")
+	contains(t, got, `"primary_category": "PRODUCTIVITY"`)
+	contains(t, got, `"secondary_category": null`)
+	contains(t, got, `"content_rights": "DOES_NOT_USE_THIRD_PARTY_CONTENT"`)
+	contains(t, got, `"violenceCartoonOrFantasy": "NONE"`)
+	must(t, !strings.Contains(got, "subcategory"), "empty subcategories aren't written:\n%s", got)
+	code, out, _ := e.run("diff", "--exit-code")
+	must(t, code == 0, "clean after pull:\n%s", out)
+
+	e.write("app_info.json", `{
+  "primary_category": "GAMES",
+  "primary_subcategory_one": "GAMES_PUZZLE",
+  "secondary_category": "UTILITIES",
+  "content_rights": "USES_THIRD_PARTY_CONTENT",
+  "age_rating": {"violenceCartoonOrFantasy": "INFREQUENT_OR_MILD", "gambling": false, "lootBox": true}
+}`)
+	e.fake.reset()
+	code, out, stderr = e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, `app_info/primary_category: "PRODUCTIVITY" → "GAMES"`)
+	contains(t, out, `app_info/age_rating/lootBox: "null" → "true"`)
+	must(t, !strings.Contains(out, "age_rating/gambling"), "unchanged attributes aren't sent:\n%s", out)
+	var patched map[string]any
+	for _, w := range e.fake.writes() {
+		if w.Path == "/v1/appInfos/i1" {
+			patched = w.Body["data"].(map[string]any)["relationships"].(map[string]any)
+		}
+	}
+	must(t, patched != nil && len(patched) == 3, "one PATCH with three relationships: %v", patched)
+	ar := e.fake.resources[[2]string{"ageRatingDeclarations", "ar1"}]
+	must(t, ar["violenceCartoonOrFantasy"] == "INFREQUENT_OR_MILD" && ar["lootBox"] == true, "age rating %v", ar)
+	must(t, e.fake.attr("apps", "app1", "contentRightsDeclaration") == "USES_THIRD_PARTY_CONTENT", "content rights")
+	code, out, _ = e.run("diff", "--exit-code")
+	must(t, code == 0, "clean after push:\n%s", out)
+
+	// On a live version, categories and the age rating wait; content rights doesn't.
+	e.fake.resources[[2]string{"appInfos", "i1"}]["state"] = "READY_FOR_DISTRIBUTION"
+	e.write("app_info.json", `{"primary_category": "BOOKS", "content_rights": "DOES_NOT_USE_THIRD_PARTY_CONTENT"}`)
+	e.fake.reset()
+	code, out, _ = e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s", code, out)
+	contains(t, out, "can't be pushed now")
+	must(t, len(e.fake.writes()) == 1 && e.fake.writes()[0].Path == "/v1/apps/app1", "only content rights: %v", paths(e.fake.writes()))
+
+	e.write("app_info.json", `{"primary_category": "books", "content_rights": "MAYBE", "age_rating": {"x": 3}, "price": 1}`)
+	code, _, stderr = e.run("validate")
+	must(t, code == 1, "exit %d", code)
+	for _, want := range []string{"isn't an App Store category ID", "must be DOES_NOT_USE", "age_rating.x: must be a string", "price: not a key"} {
+		contains(t, stderr, want)
+	}
+}
+
 func TestNewAppStoreLocaleNeedsAName(t *testing.T) {
 	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
 	e.write("fr-FR/subtitle.txt", "Sous-titre\n")
@@ -511,8 +572,8 @@ func TestMediaValidation(t *testing.T) {
 func TestTextPushNeverTouchesMedia(t *testing.T) {
 	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
 	e.write("screenshots/en-US/APP_IPHONE_67/01.png", png(1320, 2868, false, ""))
-	code, out, _ := e.run("push", "--yes")
-	must(t, code == 0, "exit %d: %s", code, out)
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
 	for _, r := range e.fake.requests {
 		must(t, !strings.Contains(r.Path, "Screenshot"), "text push touched %s", r.Path)
 	}

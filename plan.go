@@ -133,6 +133,8 @@ func buildPlan(m *LocalMetadata, r *Remote) *Plan {
 		}
 	}
 
+	planAppInfo(p, m.AppInfoSettings, r, infoLock)
+
 	// Version localizations.
 	for _, loc := range sortedKeys(m.Version) {
 		values := m.Version[loc]
@@ -398,6 +400,9 @@ func pull(cfg Config, r *Remote, only map[string]bool) ([]string, error) {
 	}
 	if r.ReviewDetail != nil {
 		try(put(r.ReviewDetail.Str("notes"), "review_information", "notes.txt"))
+	}
+	if r.AppInfo != nil && (r.Categories["primary_category"] != "" || r.AgeRating != nil) {
+		try(put(appInfoJSON(r), appInfoFile))
 	}
 	for _, kind := range []struct {
 		k      productKind

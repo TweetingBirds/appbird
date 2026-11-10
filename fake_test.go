@@ -68,6 +68,8 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			{"subscriptionLocalizations", "sl1"}:      {"locale": "en-US", "name": "Annual", "description": "Old"},
 			{"endUserLicenseAgreements", "eula1"}:     {"agreementText": "Old EULA"},
 			{"appAssetLibraries", "lib1"}:             {},
+			{"ageRatingDeclarations", "ar1"}: {"violenceCartoonOrFantasy": "NONE", "gambling": false,
+				"unrestrictedWebAccess": false, "kidsAgeBand": nil},
 			{"inAppPurchases", "iap1"}: {"productId": "com.example.coins", "name": "Coins",
 				"inAppPurchaseType": "CONSUMABLE", "reviewNote": "Old coin note"},
 			{"inAppPurchases", "s1"}:                {"productId": "com.example.annual", "inAppPurchaseType": "AUTOMATICALLY_RENEWABLE_SUBSCRIPTION"},
@@ -92,6 +94,7 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			"/v1/appStoreVersions/v1/appStoreReviewDetail": "rd1",
 			"/v1/apps/app1/endUserLicenseAgreement":        "eula1",
 			"/v1/apps/app1/assetLibrary":                   "lib1",
+			"/v1/appInfos/i1/ageRatingDeclaration":         "ar1",
 		},
 		types: map[string]string{
 			"/v1/apps": "apps", "/v1/apps/app1/appStoreVersions": "appStoreVersions",
@@ -107,6 +110,7 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			"/v1/appStoreVersions/v1/appStoreReviewDetail":             "appStoreReviewDetails",
 			"/v1/apps/app1/endUserLicenseAgreement":                    "endUserLicenseAgreements",
 			"/v1/apps/app1/assetLibrary":                               "appAssetLibraries",
+			"/v1/appInfos/i1/ageRatingDeclaration":                     "ageRatingDeclarations",
 		},
 	}
 	f.server = httptest.NewServer(http.HandlerFunc(f.handle))
@@ -246,7 +250,16 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		key := [2]string{parts[1], parts[2]}
-		attrs := body["data"].(map[string]any)["attributes"].(map[string]any)
+		data := body["data"].(map[string]any)
+		if rels, ok := data["relationships"].(map[string]any); ok {
+			if f.rels[key] == nil {
+				f.rels[key] = map[string]any{}
+			}
+			for k, v := range rels {
+				f.rels[key][k] = v
+			}
+		}
+		attrs, _ := data["attributes"].(map[string]any)
 		for k, v := range attrs {
 			f.resources[key][k] = v
 		}

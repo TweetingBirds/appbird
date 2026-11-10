@@ -153,6 +153,7 @@ type LocalMetadata struct {
 	Version            map[string]map[string]string
 	Subscriptions      map[string]*localSubscription           // product id
 	InAppPurchases     map[string]*localSubscription           // product id
+	AppInfoSettings    *localAppInfo                           // app_info.json, nil if there isn't one
 	SubscriptionGroups map[string]map[string]map[string]string // reference name -> locale -> file
 	UnknownFiles       []string
 }
@@ -219,6 +220,7 @@ func loadLocal(cfg Config) (*LocalMetadata, error) {
 	m.Copyright = readOptional(filepath.Join(root, "copyright.txt"))
 	m.EULA = readOptional(filepath.Join(root, "eula.txt"))
 	m.ReviewNotes = readOptional(filepath.Join(root, "review_information", "notes.txt"))
+	m.AppInfoSettings = readAppInfo(root)
 	allLocaleFields := append(append([]field{}, appInfoFields...), versionFields...)
 	appInfoNames, versionNames := fieldNames(appInfoFields), fieldNames(versionFields)
 
@@ -226,7 +228,8 @@ func loadLocal(cfg Config) (*LocalMetadata, error) {
 		name := e.Name()
 		path := filepath.Join(root, name)
 		switch {
-		case strings.HasPrefix(name, "."), name == "copyright.txt", name == "eula.txt", name == "README.md":
+		case strings.HasPrefix(name, "."), name == "copyright.txt", name == "eula.txt", name == "README.md",
+			name == appInfoFile:
 		case e.IsDir() && name == "review_information":
 			for _, f := range sortedDir(path) {
 				if f.Name() != "notes.txt" && !strings.HasPrefix(f.Name(), ".") {
@@ -304,6 +307,9 @@ func limitOf(fields []field, name string) int {
 func validateLocal(cfg Config, m *LocalMetadata) (problems, warnings []string) {
 	for _, p := range m.UnknownFiles {
 		warnings = append(warnings, "ignored (not a field appbird knows): "+cfg.Rel(p))
+	}
+	if m.AppInfoSettings != nil {
+		problems = append(problems, m.AppInfoSettings.Problems...)
 	}
 	locales := map[string]bool{}
 	for l := range m.AppInfo {

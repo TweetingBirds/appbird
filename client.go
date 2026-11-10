@@ -337,7 +337,7 @@ func (c *Client) GetOne(path string) (*Resource, error) {
 	if err == errNotFound {
 		return nil, nil
 	}
-	if err != nil || len(doc.Data) == 0 || string(doc.Data) == "null" {
+	if err != nil || len(doc.Data) == 0 || string(doc.Data) == "null" || doc.Data[0] == '[' {
 		return nil, err
 	}
 	r := &Resource{}
