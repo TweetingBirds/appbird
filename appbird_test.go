@@ -430,3 +430,46 @@ func TestUnifiedDiff(t *testing.T) {
 	got := strings.Join(unifiedDiff(strings.Split("a\nb\nc\nd\ne", "\n"), strings.Split("a\nb\nC\nd\ne", "\n")), "|")
 	must(t, got == " b|-c|+C| d", "diff %q", got)
 }
+
+func TestInitWritesAConfigPerPlatform(t *testing.T) {
+	dir := t.TempDir()
+	old, _ := os.Getwd()
+	os.Chdir(dir)
+	t.Cleanup(func() { os.Chdir(old) })
+	e := &env{t: t, repo: dir}
+
+	code, out, _ := e.run("init", "com.example.app", "--platform", "mac_os")
+	must(t, code == 0, "init failed: %d", code)
+	contains(t, out, "appbird pull -c appbird.macos.json")
+	var cfg map[string]string
+	raw, _ := os.ReadFile(filepath.Join(dir, "appbird.macos.json"))
+	json.Unmarshal(raw, &cfg)
+	must(t, cfg["platform"] == "MAC_OS" && cfg["metadata_dir"] == "metadata-macos", "macOS config: %v", cfg)
+
+	// With only a platform config, commands find it without -c.
+	os.MkdirAll(filepath.Join(dir, "metadata-macos", "en-US"), 0o755)
+	code, out, _ = e.run("validate")
+	must(t, code == 0, "validate failed: %d", code)
+	contains(t, out, "metadata-macos/ is valid")
+
+	// Two platform configs and no appbird.json: ask for -c.
+	e.run("init", "com.example.app", "--platform", "TV_OS")
+	code, _, errOut := e.run("validate")
+	must(t, code != 0, "expected validate to refuse two configs")
+	contains(t, errOut, "Pick one with -c")
+
+	// appbird.json (iOS) wins when it's there.
+	code, _, _ = e.run("init", "com.example.app")
+	must(t, code == 0, "iOS init failed: %d", code)
+	raw, _ = os.ReadFile(filepath.Join(dir, "appbird.json"))
+	json.Unmarshal(raw, &cfg)
+	must(t, cfg["platform"] == "IOS" && cfg["metadata_dir"] == "metadata", "iOS config: %v", cfg)
+	os.MkdirAll(filepath.Join(dir, "metadata", "en-US"), 0o755)
+	code, out, _ = e.run("validate")
+	must(t, code == 0, "validate failed: %d", code)
+	contains(t, out, "metadata/ is valid")
+
+	code, _, errOut = e.run("init", "com.example.app", "--platform", "WATCH_OS")
+	must(t, code == 2, "expected an unknown platform to fail, got %d", code)
+	contains(t, errOut, "Unknown platform")
+}

@@ -14,6 +14,41 @@ import (
 
 const configName = "appbird.json"
 
+var platforms = setOf("IOS", "MAC_OS", "TV_OS", "VISION_OS")
+
+// configFor names the config file and metadata folder `appbird init` writes for a platform.
+// iOS keeps the plain names; other platforms get their own, so one repo can hold several.
+func configFor(platform string) (file, metadataDir string) {
+	if platform == "IOS" {
+		return configName, "metadata"
+	}
+	short := strings.ToLower(strings.ReplaceAll(platform, "_", ""))
+	return "appbird." + short + ".json", "metadata-" + short
+}
+
+// configIn finds the config in one folder: appbird.json, or else the only appbird.<platform>.json.
+func configIn(dir string) (string, error) {
+	candidate := filepath.Join(dir, configName)
+	if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+		return candidate, nil
+	}
+	var found []string
+	for p := range platforms {
+		name, _ := configFor(p)
+		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && !info.IsDir() && name != configName {
+			found = append(found, name)
+		}
+	}
+	sort.Strings(found)
+	switch len(found) {
+	case 0:
+		return "", nil
+	case 1:
+		return filepath.Join(dir, found[0]), nil
+	}
+	return "", userErr("Found %s in %s. Pick one with -c.", strings.Join(found, " and "), dir)
+}
+
 // Config is an app repo's appbird.json.
 type Config struct {
 	Root        string `json:"-"`
@@ -36,9 +71,12 @@ func findConfig(start, explicit string) (Config, error) {
 	if path == "" {
 		dir, _ := filepath.Abs(start)
 		for {
-			candidate := filepath.Join(dir, configName)
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				path = candidate
+			found, err := configIn(dir)
+			if err != nil {
+				return Config{}, err
+			}
+			if found != "" {
+				path = found
 				break
 			}
 			parent := filepath.Dir(dir)

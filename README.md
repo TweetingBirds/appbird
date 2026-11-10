@@ -22,7 +22,7 @@ Done: 2 change(s) written. Nothing was submitted for review.
 - **One binary, no dependencies.** A single static executable for macOS (Apple silicon and Intel), Linux and Windows. No Ruby, no gems, no Python, no OpenSSL.
 - **Safe by default.** `diff` only reads. `push` shows the diff and asks first. Appbird never submits anything for review, never releases a version, never deletes a localization, and never touches prices, availability, or your App Review contact details.
 - **fastlane-compatible layout.** The text files use fastlane deliver's names (`metadata/en-US/description.txt`), so you can move between the two.
-- **Works for any app.** One small `appbird.json` per app repo.
+- **Works for any app.** One small `appbird.json` per app repo, and one per platform if it ships on iOS, macOS, tvOS or visionOS.
 - **Easy to hand to an AI agent.** Copy-paste prompts below [set it up for you](#set-it-up-with-an-ai-agent).
 
 ## Install
@@ -43,7 +43,7 @@ A binary downloaded with a browser on macOS is quarantined by Gatekeeper. `xattr
 
 ```sh
 cd my-app
-appbird init com.example.myapp     # writes appbird.json
+appbird init com.example.myapp     # writes appbird.json (add --platform MAC_OS for a Mac app)
 export ASC_KEY_ID=… ASC_ISSUER_ID=… ASC_PRIVATE_KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_….p8
 appbird status                     # versions, and which one is editable
 appbird pull                       # writes metadata/ from what's in App Store Connect now
@@ -62,7 +62,57 @@ From then on, edit the files, open a pull request, run `appbird diff`, and `appb
 }
 ```
 
-`platform` is `IOS`, `MAC_OS`, `TV_OS` or `VISION_OS`.
+`platform` is `IOS` (the default), `MAC_OS`, `TV_OS` or `VISION_OS`. If your app ships on more than one, see [Apps on more than one platform](#apps-on-more-than-one-platform).
+
+## Apps on more than one platform
+
+One config file manages one platform's App Store versions. Appbird asks App Store Connect only for versions of the `platform` it names, so `status`, `diff`, `push`, `pull`, `media` and `--app-version` all see that platform alone. The `--platform` flag only matters to `appbird init`. Every other command reads the platform from the config.
+
+Apple Watch apps and iMessage apps aren't platforms of their own here. They're part of the iOS version, so they use `IOS`, and their screenshots go in the `APP_WATCH_…` and `IMESSAGE_APP_…` folders next to the iPhone and iPad ones.
+
+`appbird init` names the config after the platform, so each platform gets its own config and metadata folder:
+
+| `--platform` | Config | Metadata folder |
+|---|---|---|
+| `IOS` (default) | `appbird.json` | `metadata/` |
+| `MAC_OS` | `appbird.macos.json` | `metadata-macos/` |
+| `TV_OS` | `appbird.tvos.json` | `metadata-tvos/` |
+| `VISION_OS` | `appbird.visionos.json` | `metadata-visionos/` |
+
+Commands look for `appbird.json` first. Without one, they use the only `appbird.<platform>.json` in the folder, so a Mac-only app never needs `-c`. When there's more than one config (for example, an app record in App Store Connect with both an iOS and a macOS version, a universal purchase), pick a platform other than the one in `appbird.json` with `-c`:
+
+```
+appbird.json               {"bundle_id": "com.example.myapp", "platform": "IOS",    "metadata_dir": "metadata"}
+appbird.macos.json         {"bundle_id": "com.example.myapp", "platform": "MAC_OS", "metadata_dir": "metadata-macos"}
+metadata/
+metadata-macos/
+```
+
+```sh
+appbird init com.example.myapp                          # writes appbird.json
+appbird init com.example.myapp --platform MAC_OS        # writes appbird.macos.json
+appbird pull                                            # iOS
+appbird pull -c appbird.macos.json                      # macOS
+appbird diff -c appbird.macos.json
+appbird media diff -c appbird.macos.json --app-version 2.0
+```
+
+**What each platform has of its own, and what they share.** Some of the listing belongs to each platform's version. The rest belongs to the app and is the same on every platform:
+
+| Per platform (one copy in each metadata folder) | Shared by the whole app |
+|---|---|
+| `description`, `keywords`, `promotional_text`, `release_notes`, `support_url`, `marketing_url` | `name`, `subtitle`, `privacy_url`, `privacy_choices_url` (App Info) |
+| `copyright.txt`, `review_information/notes.txt` | `eula.txt` |
+| `screenshots/`, `previews/`, and where creative assets are placed | `subscriptions/`, `subscription_groups/`, and the Asset Library that creative assets are uploaded to |
+
+Keep each shared file in **one** metadata folder only. `pull` writes every file into whichever folder you pulled into, so after pulling the second platform, delete its copies of the shared files (`name.txt`, `subtitle.txt`, the privacy URLs, `eula.txt`, `subscriptions/`, `subscription_groups/`). A missing file isn't managed, so the other config keeps owning them. If both folders keep a shared file and the two copies differ, each `push` overwrites the other's text.
+
+Things Appbird doesn't check for you:
+
+- **The platform value in a config you wrote by hand.** `appbird init` refuses an unknown platform, but a typo such as `MACOS` typed into a config later isn't caught offline. `status` then lists no versions, and `diff` reports that the app has no App Store version yet.
+- **Display types against the platform.** `media validate` accepts every display type Apple has, whatever the platform. Use the ones for that platform: `APP_DESKTOP` and `DESKTOP` for macOS, `APP_APPLE_TV` and `APPLE_TV` for tvOS, `APP_APPLE_VISION_PRO` and `APPLE_VISION_PRO` for visionOS, and the iPhone, iPad, Watch and iMessage ones for iOS.
+
+In CI, run each step once per config (`appbird diff`, then `appbird diff -c appbird.macos.json`), and add the second metadata folder (such as `metadata-macos/**`) to the workflow's `pull_request` paths filter. The filter already matches every `appbird*.json`.
 
 ## API key
 
@@ -103,10 +153,11 @@ listing lives in files here. Read its README first and follow it.
 3. Check that ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY_PATH (or ASC_PRIVATE_KEY) are
    set. Don't print their values, and never ask me to paste the key into the chat. If
    they're missing, tell me and wait.
-4. Run `appbird status`, then `appbird pull` to write metadata/ from App Store Connect,
-   then `appbird validate`. Show me the output.
-5. Make sure no .p8 file is inside the repo, then commit appbird.json and metadata/ on a
-   new branch.
+4. Run `appbird status`, then `appbird pull` to write the metadata folder from App Store
+   Connect, then `appbird validate`. Show me the output.
+5. Make sure no .p8 file is inside the repo, then commit the config and metadata folder that
+   init wrote (appbird.json and metadata/ for iOS, appbird.macos.json and metadata-macos/
+   for macOS, and so on) on a new branch.
 
 Don't run `appbird push` or `appbird media push`. I'll do that myself.
 ```
@@ -117,8 +168,10 @@ Don't run `appbird push` or `appbird media push`. I'll do that myself.
 Add Appbird's CI workflow to this repo. Copy
 https://raw.githubusercontent.com/TweetingBirds/appbird/main/examples/app-store-metadata.yml
 to .github/workflows/app-store-metadata.yml. Set APPBIRD_VERSION in it to the latest
-release from https://github.com/TweetingBirds/appbird/releases. If appbird.json uses a
-metadata_dir other than "metadata", update the pull_request paths filter to match.
+release from https://github.com/TweetingBirds/appbird/releases. If the repo's Appbird
+config (appbird.json, or appbird.<platform>.json for a non-iOS app) uses a metadata_dir
+other than "metadata", update the pull_request paths filter to match. If the repo has more
+than one config, run each appbird step once per config with -c.
 Then tell me to add ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY (the whole .p8 file) as
 repository secrets under Settings › Secrets and variables › Actions. Don't add the secrets
 or the key file yourself. Open a pull request with the change.
@@ -130,7 +183,7 @@ or the key file yourself. Open a pull request with the change.
 This repo uses fastlane deliver for App Store metadata. Set up Appbird
 (https://github.com/TweetingBirds/appbird) to read the same text files: install it as
 its README says, run `appbird init <bundle id> --platform <platform>` with the app's
-bundle ID, and set "metadata_dir" in appbird.json to the existing fastlane metadata
+bundle ID, and set "metadata_dir" in the config it wrote to the existing fastlane metadata
 folder (usually fastlane/metadata). Run `appbird validate` and tell me what it reports;
 fastlane-only files (such as primary_category.txt or a default/ folder) may show up there.
 Then run `appbird diff` and show me what differs from App Store Connect.
@@ -154,7 +207,7 @@ pull request. Don't run `appbird push`.
 
 | Command | What it does |
 |---|---|
-| `appbird init <bundle id>` | Write `appbird.json` here. |
+| `appbird init <bundle id> [--platform X]` | Write `appbird.json` here, or `appbird.<platform>.json` for a platform other than iOS. |
 | `appbird validate` | Check the files offline: character limits, URLs, locale codes, stray files. No key needed. |
 | `appbird status` | List the app's versions and their states. |
 | `appbird diff [--exit-code]` | Show what differs. Read-only. `--exit-code` exits 2 when something differs. |

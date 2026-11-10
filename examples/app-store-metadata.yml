@@ -12,7 +12,7 @@ name: App Store metadata
 
 on:
   pull_request:
-    paths: ["metadata/**", "appbird.json"]
+    paths: ["metadata/**", "appbird*.json"]
   workflow_dispatch:
     inputs:
       action:

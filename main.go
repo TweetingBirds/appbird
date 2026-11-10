@@ -23,7 +23,8 @@ const usage = `appbird: keep your App Store Connect listing in sync with files i
 Never submits anything for review.
 
 Usage:
-  appbird init <bundle id> [--platform IOS]   write appbird.json here
+  appbird init <bundle id> [--platform IOS]   write appbird.json here (appbird.macos.json
+                                              for MAC_OS, and so on)
   appbird validate                            check metadata/ offline (limits, URLs, locales)
   appbird status                              list the app's versions and which one is editable
   appbird diff  [--app-version X.Y] [--exit-code]
@@ -153,15 +154,23 @@ func (a *app) cmdInit(o *options) (int, error) {
 	if len(o.args) != 1 {
 		return 2, userErr("Pass the app's bundle ID: appbird init com.example.app")
 	}
-	path := configName
+	platform := strings.ToUpper(o.platform)
+	if !platforms[platform] {
+		return 2, userErr("Unknown platform %q. Use IOS, MAC_OS, TV_OS or VISION_OS.", o.platform)
+	}
+	path, dir := configFor(platform)
 	if _, err := os.Stat(path); err == nil {
 		return 1, userErr("%s already exists.", path)
 	}
-	raw, _ := json.MarshalIndent(map[string]string{"bundle_id": o.args[0], "platform": o.platform, "metadata_dir": "metadata"}, "", "  ")
+	raw, _ := json.MarshalIndent(map[string]string{"bundle_id": o.args[0], "platform": platform, "metadata_dir": dir}, "", "  ")
 	if err := os.WriteFile(path, append(raw, '\n'), 0o644); err != nil {
 		return 1, err
 	}
-	fmt.Fprintf(a.out, "Wrote %s. Next: set the API key variables and run `appbird pull`.\n", path)
+	next := "run `appbird pull`"
+	if path != configName {
+		next = "run `appbird pull -c " + path + "`"
+	}
+	fmt.Fprintf(a.out, "Wrote %s. Next: set the API key variables and %s.\n", path, next)
 	return 0, nil
 }
 
