@@ -68,6 +68,10 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			{"subscriptionLocalizations", "sl1"}:      {"locale": "en-US", "name": "Annual", "description": "Old"},
 			{"endUserLicenseAgreements", "eula1"}:     {"agreementText": "Old EULA"},
 			{"appAssetLibraries", "lib1"}:             {},
+			{"inAppPurchases", "iap1"}: {"productId": "com.example.coins", "name": "Coins",
+				"inAppPurchaseType": "CONSUMABLE", "reviewNote": "Old coin note"},
+			{"inAppPurchases", "s1"}:                {"productId": "com.example.annual", "inAppPurchaseType": "AUTOMATICALLY_RENEWABLE_SUBSCRIPTION"},
+			{"inAppPurchaseLocalizations", "iapl1"}: {"locale": "en-US", "name": "100 Coins", "description": "A pile of coins"},
 		},
 		rels:    map[[2]string]map[string]any{},
 		uploads: map[string][]byte{},
@@ -81,6 +85,8 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			"/v1/subscriptionGroups/g1/subscriptionGroupLocalizations": {"gl1"},
 			"/v1/subscriptionGroups/g1/subscriptions":                  {"s1"},
 			"/v1/subscriptions/s1/subscriptionLocalizations":           {"sl1"},
+			"/v1/apps/app1/inAppPurchasesV2":                           {"iap1", "s1"},
+			"/v1/inAppPurchases/iap1/inAppPurchaseLocalizations":       {"iapl1"},
 		},
 		single: map[string]string{
 			"/v1/appStoreVersions/v1/appStoreReviewDetail": "rd1",
@@ -96,6 +102,8 @@ func newFake(t *testing.T, versionState, infoState string) *fakeASC {
 			"/v1/subscriptionGroups/g1/subscriptionGroupLocalizations": "subscriptionGroupLocalizations",
 			"/v1/subscriptionGroups/g1/subscriptions":                  "subscriptions",
 			"/v1/subscriptions/s1/subscriptionLocalizations":           "subscriptionLocalizations",
+			"/v1/apps/app1/inAppPurchasesV2":                           "inAppPurchases",
+			"/v1/inAppPurchases/iap1/inAppPurchaseLocalizations":       "inAppPurchaseLocalizations",
 			"/v1/appStoreVersions/v1/appStoreReviewDetail":             "appStoreReviewDetails",
 			"/v1/apps/app1/endUserLicenseAgreement":                    "endUserLicenseAgreements",
 			"/v1/apps/app1/assetLibrary":                               "appAssetLibraries",
@@ -159,7 +167,9 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	path := r.URL.Path
-	parts := strings.Split(strings.Trim(path, "/"), "/")
+	// Resources under /v2 are stored with the /v1 ones.
+	store := strings.Replace(path, "/v2/", "/v1/", 1)
+	parts := strings.Split(strings.Trim(store, "/"), "/")
 	raw, _ := io.ReadAll(r.Body)
 	if parts[0] == "upload" {
 		if r.Header.Get("Authorization") != "" {
@@ -194,18 +204,18 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case "GET":
-		if id, ok := f.single[path]; ok {
-			reply(w, 200, map[string]any{"data": f.resource(f.types[path], id)})
+		if id, ok := f.single[store]; ok {
+			reply(w, 200, map[string]any{"data": f.resource(f.types[store], id)})
 			return
 		}
-		if ids, ok := f.children[path]; ok {
+		if ids, ok := f.children[store]; ok {
 			data := []any{}
 			included := []any{}
 			for _, id := range ids {
-				res := f.resource(f.types[path], id)
+				res := f.resource(f.types[store], id)
 				data = append(data, res)
 				if r.URL.Query().Get("include") != "" {
-					for _, rel := range f.rels[[2]string{f.types[path], id}] {
+					for _, rel := range f.rels[[2]string{f.types[store], id}] {
 						d := rel.(map[string]any)["data"].(map[string]any)
 						included = append(included, f.resource(d["type"].(string), d["id"].(string)))
 					}

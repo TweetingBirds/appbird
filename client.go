@@ -345,8 +345,20 @@ func (c *Client) GetOne(path string) (*Resource, error) {
 }
 
 func (c *Client) Patch(rtype, id string, attrs map[string]any) error {
-	_, err := c.do(http.MethodPatch, "/v1/"+rtype+"/"+id, nil, map[string]any{
-		"data": map[string]any{"type": rtype, "id": id, "attributes": attrs}})
+	return c.PatchAt("/v1/"+rtype+"/"+id, rtype, id, attrs, nil)
+}
+
+// PatchAt patches a resource at an explicit path (some live under /v2), with optional
+// to-one relationships.
+func (c *Client) PatchAt(path, rtype, id string, attrs map[string]any, relationships map[string]any) error {
+	data := map[string]any{"type": rtype, "id": id}
+	if len(attrs) > 0 {
+		data["attributes"] = attrs
+	}
+	if len(relationships) > 0 {
+		data["relationships"] = relationships
+	}
+	_, err := c.do(http.MethodPatch, path, nil, map[string]any{"data": data})
 	return err
 }
 

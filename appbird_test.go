@@ -248,6 +248,44 @@ func TestUnknownSubscriptionListsTheOnesThatExist(t *testing.T) {
 	contains(t, out, "Pro: no group with that reference name; skipped (found: Premium)")
 }
 
+func TestInAppPurchasesUpdateCreateAndPull(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	code, _, stderr := e.run("pull")
+	must(t, code == 0, "pull: %s", stderr)
+	must(t, e.read("in_app_purchases/com.example.coins/en-US/name.txt") == "100 Coins\n", "IAP name pulled")
+	must(t, e.read("in_app_purchases/com.example.coins/review_note.txt") == "Old coin note\n", "IAP review note pulled")
+	_, err := os.Stat(filepath.Join(e.repo, "metadata/in_app_purchases/com.example.annual"))
+	must(t, os.IsNotExist(err), "auto-renewable subscriptions stay under subscriptions/")
+
+	e.write("in_app_purchases/com.example.coins/en-US/description.txt", "A big pile of coins\n")
+	e.write("in_app_purchases/com.example.coins/de-DE/name.txt", "100 Münzen\n")
+	e.write("in_app_purchases/com.example.coins/review_note.txt", "Buy, then check the balance\n")
+	e.write("in_app_purchases/com.example.gems/en-US/name.txt", "Gems\n")
+	e.fake.reset()
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, "com.example.gems: no such in-app purchase in App Store Connect; skipped (found: com.example.coins)")
+	got := paths(e.fake.writes())
+	for _, want := range []string{"PATCH /v1/inAppPurchaseLocalizations/iapl1", "POST /v1/inAppPurchaseLocalizations", "PATCH /v2/inAppPurchases/iap1"} {
+		must(t, has(got, want), "missing %s in %v", want, got)
+	}
+	for _, w := range e.fake.writes() {
+		if w.Method == "POST" {
+			rels := w.Body["data"].(map[string]any)["relationships"].(map[string]any)
+			d := rels["inAppPurchaseV2"].(map[string]any)["data"].(map[string]any)
+			must(t, d["type"] == "inAppPurchases" && d["id"] == "iap1", "related to the IAP: %v", rels)
+		}
+	}
+	os.RemoveAll(filepath.Join(e.repo, "metadata/in_app_purchases/com.example.gems"))
+	code, out, _ = e.run("diff", "--exit-code")
+	must(t, code == 0, "clean after push:\n%s", out)
+
+	e.write("in_app_purchases/com.example.coins/en-US/description.txt", strings.Repeat("x", 56))
+	code, _, stderr = e.run("validate")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "in_app_purchases/com.example.coins/en-US/description: 56 characters, the limit is 55")
+}
+
 func TestNewAppStoreLocaleNeedsAName(t *testing.T) {
 	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
 	e.write("fr-FR/subtitle.txt", "Sous-titre\n")

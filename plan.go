@@ -240,45 +240,9 @@ func buildPlan(m *LocalMetadata, r *Remote) *Plan {
 		}
 	}
 
-	// Subscriptions.
-	for _, pid := range sortedKeys(m.Subscriptions) {
-		local := m.Subscriptions[pid]
-		remote := r.Subscriptions[pid]
-		if remote == nil {
-			p.Notes = append(p.Notes, "subscriptions/"+pid+": no such subscription in App Store Connect; skipped (found: "+
-				firstNonEmpty(strings.Join(sortedKeys(r.Subscriptions), ", "), "none")+")")
-			continue
-		}
-		if local.ReviewNote.Set {
-			if old := normalize(remote.Sub.Str("reviewNote")); old != local.ReviewNote.Value {
-				id, val := remote.Sub.ID, local.ReviewNote.Value
-				p.add("update "+pid+" review note",
-					func(c *Client) error {
-						return c.Patch("subscriptions", id, map[string]any{"reviewNote": nullable(val)})
-					},
-					[]*Change{{Label: "subscriptions/" + pid + "/review_note", Old: old, New: val}})
-			}
-		}
-		for _, loc := range sortedKeys(local.Locales) {
-			values := local.Locales[loc]
-			existing := remote.Locs[loc]
-			attrs, changes := diffFields("subscriptions/"+pid+"/"+loc+"/", values, existing, subscriptionLocFields)
-			switch {
-			case len(changes) == 0:
-			case existing != nil:
-				id := existing.ID
-				p.add("update "+pid+" "+loc, func(c *Client) error { return c.Patch("subscriptionLocalizations", id, attrs) }, changes)
-			case values["name"] != "":
-				sid, a := remote.Sub.ID, createAttrs(loc, attrs)
-				p.add("add "+pid+" locale "+loc, func(c *Client) error {
-					_, err := c.Create("subscriptionLocalizations", a, map[string]any{"subscription": rel("subscriptions", sid)})
-					return err
-				}, changes)
-			default:
-				p.Notes = append(p.Notes, "subscriptions/"+pid+"/"+loc+": a new locale needs name.txt; skipped")
-			}
-		}
-	}
+	// Subscriptions and other in-app purchases.
+	planProducts(p, subscriptionProducts, m.Subscriptions, r.Subscriptions)
+	planProducts(p, inAppPurchaseProducts, m.InAppPurchases, r.InAppPurchases)
 	for _, ref := range sortedKeys(m.SubscriptionGroups) {
 		remote := r.Groups[ref]
 		if remote == nil {
@@ -317,6 +281,65 @@ func buildPlan(m *LocalMetadata, r *Remote) *Plan {
 		p.Notes = append(p.Notes, "in App Store Connect but not in the repo (left alone): "+strings.Join(unmanaged, ", "))
 	}
 	return p
+}
+
+// productKind says where a kind of product lives locally and in the API.
+type productKind struct {
+	dir, noun       string // metadata folder, and what to call one in notes
+	fields          []field
+	productPath     string // PATCH path prefix for the product
+	productType     string
+	locType, locRel string // localization type, and its relationship to the product
+	locRelType      string
+}
+
+var subscriptionProducts = productKind{"subscriptions", "subscription", subscriptionLocFields,
+	"/v1/subscriptions/", "subscriptions", "subscriptionLocalizations", "subscription", "subscriptions"}
+
+// In-app purchase localizations use the pre-4.4.1 endpoints, as subscriptions do. Apple
+// deprecated them in favor of versioned metadata but keeps them working.
+var inAppPurchaseProducts = productKind{"in_app_purchases", "in-app purchase", inAppPurchaseLocFields,
+	"/v2/inAppPurchases/", "inAppPurchases", "inAppPurchaseLocalizations", "inAppPurchaseV2", "inAppPurchases"}
+
+func planProducts(p *Plan, k productKind, local map[string]*localSubscription, remote map[string]*remoteSubscription) {
+	for _, pid := range sortedKeys(local) {
+		lp := local[pid]
+		rp := remote[pid]
+		if rp == nil {
+			p.Notes = append(p.Notes, k.dir+"/"+pid+": no such "+k.noun+" in App Store Connect; skipped (found: "+
+				firstNonEmpty(strings.Join(sortedKeys(remote), ", "), "none")+")")
+			continue
+		}
+		if lp.ReviewNote.Set {
+			if old := normalize(rp.Sub.Str("reviewNote")); old != lp.ReviewNote.Value {
+				id, val := rp.Sub.ID, lp.ReviewNote.Value
+				p.add("update "+pid+" review note",
+					func(c *Client) error {
+						return c.PatchAt(k.productPath+id, k.productType, id, map[string]any{"reviewNote": nullable(val)}, nil)
+					},
+					[]*Change{{Label: k.dir + "/" + pid + "/review_note", Old: old, New: val}})
+			}
+		}
+		for _, loc := range sortedKeys(lp.Locales) {
+			values := lp.Locales[loc]
+			existing := rp.Locs[loc]
+			attrs, changes := diffFields(k.dir+"/"+pid+"/"+loc+"/", values, existing, k.fields)
+			switch {
+			case len(changes) == 0:
+			case existing != nil:
+				id := existing.ID
+				p.add("update "+pid+" "+loc, func(c *Client) error { return c.Patch(k.locType, id, attrs) }, changes)
+			case values["name"] != "":
+				sid, a := rp.Sub.ID, createAttrs(loc, attrs)
+				p.add("add "+pid+" locale "+loc, func(c *Client) error {
+					_, err := c.Create(k.locType, a, map[string]any{k.locRel: rel(k.locRelType, sid)})
+					return err
+				}, changes)
+			default:
+				p.Notes = append(p.Notes, k.dir+"/"+pid+"/"+loc+": a new locale needs name.txt; skipped")
+			}
+		}
+	}
 }
 
 func firstNonEmpty(s ...string) string {
@@ -376,13 +399,18 @@ func pull(cfg Config, r *Remote, only map[string]bool) ([]string, error) {
 	if r.ReviewDetail != nil {
 		try(put(r.ReviewDetail.Str("notes"), "review_information", "notes.txt"))
 	}
-	for _, pid := range sortedKeys(r.Subscriptions) {
-		s := r.Subscriptions[pid]
-		try(put(s.Sub.Str("reviewNote"), "subscriptions", pid, "review_note.txt"))
-		for _, loc := range sortedKeys(s.Locs) {
-			if keep(loc) {
-				for _, f := range subscriptionLocFields {
-					try(put(s.Locs[loc].Str(f.API), "subscriptions", pid, loc, f.File+".txt"))
+	for _, kind := range []struct {
+		k      productKind
+		remote map[string]*remoteSubscription
+	}{{subscriptionProducts, r.Subscriptions}, {inAppPurchaseProducts, r.InAppPurchases}} {
+		for _, pid := range sortedKeys(kind.remote) {
+			s := kind.remote[pid]
+			try(put(s.Sub.Str("reviewNote"), kind.k.dir, pid, "review_note.txt"))
+			for _, loc := range sortedKeys(s.Locs) {
+				if keep(loc) {
+					for _, f := range kind.k.fields {
+						try(put(s.Locs[loc].Str(f.API), kind.k.dir, pid, loc, f.File+".txt"))
+					}
 				}
 			}
 		}

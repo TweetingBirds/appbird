@@ -214,8 +214,8 @@ func (a *app) cmdValidate(o *options) (int, error) {
 		return 1, err
 	}
 	locales := sortedKeys(m.AppInfo)
-	fmt.Fprintf(a.out, "%s/ is valid: %d locale(s) (%s), %d subscription(s).\n", cfg.MetadataDir, len(locales),
-		firstNonEmpty(strings.Join(locales, ", "), "none"), len(m.Subscriptions))
+	fmt.Fprintf(a.out, "%s/ is valid: %d locale(s) (%s), %d subscription(s), %d in-app purchase(s).\n", cfg.MetadataDir, len(locales),
+		firstNonEmpty(strings.Join(locales, ", "), "none"), len(m.Subscriptions), len(m.InAppPurchases))
 	return 0, nil
 }
 

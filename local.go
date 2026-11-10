@@ -152,6 +152,7 @@ type LocalMetadata struct {
 	AppInfo            map[string]map[string]string // locale -> file -> value
 	Version            map[string]map[string]string
 	Subscriptions      map[string]*localSubscription           // product id
+	InAppPurchases     map[string]*localSubscription           // product id
 	SubscriptionGroups map[string]map[string]map[string]string // reference name -> locale -> file
 	UnknownFiles       []string
 }
@@ -186,6 +187,25 @@ func readLocaleDir(dir string, fields []field, unknown *[]string) map[string]str
 	return values
 }
 
+// readProducts reads subscriptions/ or in_app_purchases/: a folder per product ID holding
+// review_note.txt and a folder per locale.
+func readProducts(path string, fields []field, into map[string]*localSubscription, unknown *[]string) {
+	for _, p := range sortedDir(path) {
+		if !p.IsDir() {
+			continue
+		}
+		dir := filepath.Join(path, p.Name())
+		prod := &localSubscription{ReviewNote: readOptional(filepath.Join(dir, "review_note.txt")),
+			Locales: map[string]map[string]string{}}
+		for _, l := range sortedDir(dir) {
+			if l.IsDir() {
+				prod.Locales[l.Name()] = readLocaleDir(filepath.Join(dir, l.Name()), fields, unknown)
+			}
+		}
+		into[p.Name()] = prod
+	}
+}
+
 func loadLocal(cfg Config) (*LocalMetadata, error) {
 	root := cfg.MetadataPath()
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
@@ -194,6 +214,7 @@ func loadLocal(cfg Config) (*LocalMetadata, error) {
 	m := &LocalMetadata{
 		AppInfo: map[string]map[string]string{}, Version: map[string]map[string]string{},
 		Subscriptions: map[string]*localSubscription{}, SubscriptionGroups: map[string]map[string]map[string]string{},
+		InAppPurchases: map[string]*localSubscription{},
 	}
 	m.Copyright = readOptional(filepath.Join(root, "copyright.txt"))
 	m.EULA = readOptional(filepath.Join(root, "eula.txt"))
@@ -213,20 +234,9 @@ func loadLocal(cfg Config) (*LocalMetadata, error) {
 				}
 			}
 		case e.IsDir() && name == "subscriptions":
-			for _, p := range sortedDir(path) {
-				if !p.IsDir() {
-					continue
-				}
-				dir := filepath.Join(path, p.Name())
-				sub := &localSubscription{ReviewNote: readOptional(filepath.Join(dir, "review_note.txt")),
-					Locales: map[string]map[string]string{}}
-				for _, l := range sortedDir(dir) {
-					if l.IsDir() {
-						sub.Locales[l.Name()] = readLocaleDir(filepath.Join(dir, l.Name()), subscriptionLocFields, &m.UnknownFiles)
-					}
-				}
-				m.Subscriptions[p.Name()] = sub
-			}
+			readProducts(path, subscriptionLocFields, m.Subscriptions, &m.UnknownFiles)
+		case e.IsDir() && name == "in_app_purchases":
+			readProducts(path, inAppPurchaseLocFields, m.InAppPurchases, &m.UnknownFiles)
 		case e.IsDir() && name == "subscription_groups":
 			for _, g := range sortedDir(path) {
 				if !g.IsDir() {
@@ -299,9 +309,11 @@ func validateLocal(cfg Config, m *LocalMetadata) (problems, warnings []string) {
 	for l := range m.AppInfo {
 		locales[l] = true
 	}
-	for _, s := range m.Subscriptions {
-		for l := range s.Locales {
-			locales[l] = true
+	for _, products := range []map[string]*localSubscription{m.Subscriptions, m.InAppPurchases} {
+		for _, s := range products {
+			for l := range s.Locales {
+				locales[l] = true
+			}
 		}
 	}
 	for _, g := range m.SubscriptionGroups {
@@ -327,14 +339,24 @@ func validateLocal(cfg Config, m *LocalMetadata) (problems, warnings []string) {
 	if n := utf8.RuneCountInString(m.ReviewNotes.Value); n > reviewNotesLimit {
 		problems = append(problems, fmt.Sprintf("review_information/notes: %d characters, the limit is %d", n, reviewNotesLimit))
 	}
-	for _, pid := range sortedKeys(m.Subscriptions) {
-		s := m.Subscriptions[pid]
-		if n := utf8.RuneCountInString(s.ReviewNote.Value); n > subscriptionReviewNoteLimit {
-			problems = append(problems, fmt.Sprintf("subscriptions/%s/review_note: %d characters, the limit is %d", pid, n, subscriptionReviewNoteLimit))
-		}
-		for _, l := range sortedKeys(s.Locales) {
-			for _, k := range sortedKeys(s.Locales[l]) {
-				checkValue(&problems, &warnings, "subscriptions/"+pid+"/"+l, k, s.Locales[l][k], limitOf(subscriptionLocFields, k))
+	for _, kind := range []struct {
+		dir      string
+		products map[string]*localSubscription
+		fields   []field
+		limit    int
+	}{
+		{"subscriptions", m.Subscriptions, subscriptionLocFields, subscriptionReviewNoteLimit},
+		{"in_app_purchases", m.InAppPurchases, inAppPurchaseLocFields, inAppPurchaseReviewNoteLimit},
+	} {
+		for _, pid := range sortedKeys(kind.products) {
+			s := kind.products[pid]
+			if n := utf8.RuneCountInString(s.ReviewNote.Value); n > kind.limit {
+				problems = append(problems, fmt.Sprintf("%s/%s/review_note: %d characters, the limit is %d", kind.dir, pid, n, kind.limit))
+			}
+			for _, l := range sortedKeys(s.Locales) {
+				for _, k := range sortedKeys(s.Locales[l]) {
+					checkValue(&problems, &warnings, kind.dir+"/"+pid+"/"+l, k, s.Locales[l][k], limitOf(kind.fields, k))
+				}
 			}
 		}
 	}
