@@ -1,0 +1,422 @@
+package main
+
+import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
+	"encoding/pem"
+	"math/big"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+)
+
+type env struct {
+	t    *testing.T
+	fake *fakeASC
+	repo string
+	key  *ecdsa.PrivateKey
+}
+
+func setup(t *testing.T, versionState, infoState string) *env {
+	t.Helper()
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	der, _ := x509.MarshalPKCS8PrivateKey(key)
+	dir := t.TempDir()
+	keyPath := filepath.Join(dir, "AuthKey_TEST.p8")
+	os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}), 0o600)
+	fake := newFake(t, versionState, infoState)
+	t.Setenv("ASC_KEY_ID", "TEST")
+	t.Setenv("ASC_ISSUER_ID", "issuer")
+	t.Setenv("ASC_PRIVATE_KEY_PATH", keyPath)
+	t.Setenv("ASC_PRIVATE_KEY", "")
+	t.Setenv("ASC_API_BASE", fake.server.URL)
+	t.Setenv("GITHUB_STEP_SUMMARY", "")
+	repo := t.TempDir()
+	os.WriteFile(filepath.Join(repo, "appbird.json"), []byte(`{"bundle_id": "com.example.app"}`), 0o644)
+	old, _ := os.Getwd()
+	os.Chdir(repo)
+	t.Cleanup(func() { os.Chdir(old) })
+	return &env{t, fake, repo, key}
+}
+
+func (e *env) run(args ...string) (int, string, string) {
+	var out, errb bytes.Buffer
+	code := run(args, strings.NewReader(""), &out, &errb)
+	return code, out.String(), errb.String()
+}
+
+func (e *env) write(rel, text string) string {
+	path := filepath.Join(e.repo, "metadata", rel)
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(text), 0o644)
+	return path
+}
+
+func (e *env) read(rel string) string {
+	b, _ := os.ReadFile(filepath.Join(e.repo, "metadata", rel))
+	return string(b)
+}
+
+func must(t *testing.T, cond bool, msg string, args ...any) {
+	t.Helper()
+	if !cond {
+		t.Fatalf(msg, args...)
+	}
+}
+
+func contains(t *testing.T, s, sub string) {
+	t.Helper()
+	if !strings.Contains(s, sub) {
+		t.Fatalf("expected %q in:\n%s", sub, s)
+	}
+}
+
+func paths(rs []recorded) []string {
+	var out []string
+	for _, r := range rs {
+		out = append(out, r.Method+" "+r.Path)
+	}
+	return out
+}
+
+func has(list []string, item string) bool {
+	for _, i := range list {
+		if i == item {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- token ----------------------------------------------------------------------------------
+
+func TestTokenIsAValidES256JWT(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	creds, err := loadCredentials()
+	must(t, err == nil, "credentials: %v", err)
+	token, err := makeToken(creds, time.Unix(1000, 0))
+	must(t, err == nil, "token: %v", err)
+	parts := strings.Split(token, ".")
+	must(t, len(parts) == 3, "three parts")
+	header, _ := base64.RawURLEncoding.DecodeString(parts[0])
+	payload, _ := base64.RawURLEncoding.DecodeString(parts[1])
+	must(t, string(header) == `{"alg":"ES256","kid":"TEST","typ":"JWT"}`, "header %s", header)
+	var claims map[string]any
+	json.Unmarshal(payload, &claims)
+	must(t, claims["iss"] == "issuer" && claims["aud"] == "appstoreconnect-v1" && claims["iat"] == 1000.0 && claims["exp"] == 1900.0,
+		"claims %v", claims)
+	sig, _ := base64.RawURLEncoding.DecodeString(parts[2])
+	must(t, len(sig) == 64, "raw r||s signature")
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	r, s := new(big.Int).SetBytes(sig[:32]), new(big.Int).SetBytes(sig[32:])
+	must(t, ecdsa.Verify(&e.key.PublicKey, digest[:], r, s), "signature verifies")
+}
+
+func TestIndividualKeyAndKeyFromEnv(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	pemBytes, _ := os.ReadFile(os.Getenv("ASC_PRIVATE_KEY_PATH"))
+	t.Setenv("ASC_PRIVATE_KEY_PATH", "")
+	t.Setenv("ASC_ISSUER_ID", "")
+	t.Setenv("ASC_PRIVATE_KEY", strings.ReplaceAll(string(pemBytes), "\n", `\n`))
+	creds, err := loadCredentials()
+	must(t, err == nil, "credentials: %v", err)
+	must(t, creds.Key.Equal(e.key), "same key")
+	token, _ := makeToken(creds, time.Unix(1, 0))
+	payload, _ := base64.RawURLEncoding.DecodeString(strings.Split(token, ".")[1])
+	var claims map[string]any
+	json.Unmarshal(payload, &claims)
+	must(t, claims["sub"] == "user" && claims["iss"] == nil, "individual key claims %v", claims)
+}
+
+// ---- validate -------------------------------------------------------------------------------
+
+func TestValidateLimitsURLsAndLocales(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("en-US/name.txt", strings.Repeat("x", 31))
+	e.write("en-US/support_url.txt", "not a url")
+	e.write("es-419/description.txt", "Hola")
+	e.write("en-US/stray.txt", "?")
+	code, _, stderr := e.run("validate")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "en-US/name: 31 characters, the limit is 30")
+	contains(t, stderr, "not a URL")
+	contains(t, stderr, "es-419: not a listing locale")
+	contains(t, stderr, "ignored")
+	must(t, len(e.fake.requests) == 0, "validate is offline")
+}
+
+func TestValidateCountsCharactersNotBytes(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("ja/subtitle.txt", strings.Repeat("場", 30))
+	code, out, stderr := e.run("validate")
+	must(t, code == 0, "exit %d: %s", code, stderr)
+	contains(t, out, "1 locale(s) (ja)")
+}
+
+// ---- live version ---------------------------------------------------------------------------
+
+func TestDiffIsReadOnlyAndMarksLockedFields(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("en-US/description.txt", "New description.\n")
+	e.write("en-US/promotional_text.txt", "New promo\n")
+	e.write("en-US/subtitle.txt", "New subtitle\n")
+	code, out, _ := e.run("diff", "--exit-code")
+	must(t, code == 2, "exit %d", code)
+	must(t, len(e.fake.writes()) == 0, "diff wrote %v", paths(e.fake.writes()))
+	contains(t, out, "READY_FOR_DISTRIBUTION, not editable")
+	contains(t, out, `"Old promo" → "New promo"`)
+	contains(t, out, "can't be pushed now (version 1.0 is READY_FOR_DISTRIBUTION")
+	contains(t, out, "+New description.")
+}
+
+func TestPushOnALiveVersionSendsOnlyPromotionalText(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("en-US/description.txt", "New description.\n")
+	e.write("en-US/promotional_text.txt", "New promo\n")
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	w := e.fake.writes()
+	must(t, len(w) == 1 && w[0].Path == "/v1/appStoreVersionLocalizations/vl1", "writes %v", paths(w))
+	attrs := w[0].Body["data"].(map[string]any)["attributes"].(map[string]any)
+	must(t, len(attrs) == 1 && attrs["promotionalText"] == "New promo", "attrs %v", attrs)
+}
+
+func TestPushNeedsYesWithoutATerminal(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("en-US/promotional_text.txt", "New promo\n")
+	code, _, stderr := e.run("push")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "pass --yes")
+	must(t, len(e.fake.writes()) == 0, "nothing written")
+}
+
+// ---- editable version -----------------------------------------------------------------------
+
+func TestPushUpdatesCreatesAndNeverSubmits(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("en-US/description.txt", "New description.\n")
+	e.write("en-US/keywords.txt", "a,b\n")
+	e.write("en-US/subtitle.txt", "New subtitle\n")
+	e.write("en-US/marketing_url.txt", "")
+	e.write("de-DE/name.txt", "Beispiel\n")
+	e.write("de-DE/description.txt", "Neu.\n")
+	e.write("copyright.txt", "2026 Example LLC\n")
+	e.write("review_information/notes.txt", "New notes\n")
+	e.write("subscriptions/com.example.annual/review_note.txt", "New note\n")
+	e.write("subscriptions/com.example.annual/de-DE/name.txt", "Jährlich\n")
+	e.write("subscription_groups/Premium/en-US/custom_app_name.txt", "Example\n")
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	got := paths(e.fake.writes())
+	for _, want := range []string{
+		"PATCH /v1/appStoreVersionLocalizations/vl1", "PATCH /v1/appInfoLocalizations/il1",
+		"POST /v1/appInfoLocalizations", "POST /v1/appStoreVersionLocalizations", "PATCH /v1/appStoreVersions/v1",
+		"PATCH /v1/appStoreReviewDetails/rd1", "PATCH /v1/subscriptions/s1", "POST /v1/subscriptionLocalizations",
+		"PATCH /v1/subscriptionGroupLocalizations/gl1",
+	} {
+		must(t, has(got, want), "missing %s in %v", want, got)
+	}
+	for _, p := range got {
+		must(t, !strings.Contains(p, "Submission") && !strings.HasPrefix(p, "DELETE"), "unexpected %s", p)
+	}
+	must(t, e.fake.attr("appStoreVersionLocalizations", "vl1", "description") == "New description.", "description written")
+	must(t, e.fake.attr("appStoreReviewDetails", "rd1", "contactEmail") == "secret@example.com", "contact untouched")
+	e.fake.reset()
+	code, out, _ = e.run("diff", "--exit-code")
+	must(t, code == 0, "second diff exit %d:\n%s", code, out)
+	contains(t, out, "No differences")
+}
+
+func TestNewAppStoreLocaleNeedsAName(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("fr-FR/subtitle.txt", "Sous-titre\n")
+	code, out, _ := e.run("push", "--yes")
+	must(t, code == 0, "exit %d", code)
+	contains(t, out, "fr-FR: new App Store locales need name.txt")
+	must(t, len(e.fake.writes()) == 0, "nothing written")
+}
+
+func TestValidationFailureSendsNothing(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("en-US/promotional_text.txt", strings.Repeat("x", 171))
+	code, _, stderr := e.run("push", "--yes")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "nothing was sent")
+	must(t, len(e.fake.requests) == 0, "no requests at all")
+}
+
+// ---- pull and EULA --------------------------------------------------------------------------
+
+func TestPullThenDiffIsClean(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	code, _, stderr := e.run("pull")
+	must(t, code == 0, "pull: %s", stderr)
+	must(t, e.read("en-US/description.txt") == "Old description.\nSecond line.\n", "description")
+	must(t, e.read("en-US/marketing_url.txt") == "", "empty field becomes an empty file")
+	must(t, e.read("en-US/name.txt") == "Example\n", "name")
+	must(t, e.read("review_information/notes.txt") == "Old notes\n", "notes")
+	must(t, e.read("eula.txt") == "Old EULA\n", "eula")
+	must(t, e.read("subscriptions/com.example.annual/en-US/name.txt") == "Annual\n", "subscription")
+	_, err := os.Stat(filepath.Join(e.repo, "metadata/review_information/contact_email.txt"))
+	must(t, os.IsNotExist(err), "contact details never pulled")
+	must(t, len(e.fake.writes()) == 0, "pull doesn't write to App Store Connect")
+	code, out, _ := e.run("diff", "--exit-code")
+	must(t, code == 0, "diff after pull:\n%s", out)
+	_, out, _ = e.run("pull")
+	contains(t, out, "already matches")
+}
+
+func TestEULAUpdatesOnALiveVersionAndIsNeverBlanked(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("eula.txt", "New EULA\n")
+	code, out, _ := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s", code, out)
+	must(t, e.fake.attr("endUserLicenseAgreements", "eula1", "agreementText") == "New EULA", "eula written")
+	e.write("eula.txt", "")
+	_, out, _ = e.run("push", "--yes")
+	contains(t, out, "won't blank the custom EULA")
+}
+
+// ---- media ----------------------------------------------------------------------------------
+
+func png(w, h int, alpha bool, salt string) string {
+	ihdr := make([]byte, 13)
+	binary.BigEndian.PutUint32(ihdr[0:], uint32(w))
+	binary.BigEndian.PutUint32(ihdr[4:], uint32(h))
+	ihdr[8] = 8
+	ihdr[9] = 2
+	if alpha {
+		ihdr[9] = 6
+	}
+	return "\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR" + string(ihdr) + "\x00\x00\x00\x00" + salt
+}
+
+func (e *env) shotsIn(setID string) []string {
+	var names []string
+	for _, id := range e.fake.children["/v1/appScreenshotSets/"+setID+"/appScreenshots"] {
+		names = append(names, e.fake.attr("appScreenshots", id, "fileName").(string))
+	}
+	return names
+}
+
+func TestScreenshotsCreateNoopReplaceAndReorder(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	a := e.write("screenshots/en-US/APP_IPHONE_67/01-journal.png", png(1320, 2868, false, "a"))
+	e.write("screenshots/en-US/APP_IPHONE_67/02-map.png", png(1320, 2868, false, "b"))
+	code, out, stderr := e.run("media", "push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	sets := e.fake.children["/v1/appStoreVersionLocalizations/vl1/appScreenshotSets"]
+	must(t, len(sets) == 1, "one set: %v", sets)
+	set := sets[0]
+	must(t, e.fake.attr("appScreenshotSets", set, "screenshotDisplayType") == "APP_IPHONE_67", "display type")
+	must(t, strings.Join(e.shotsIn(set), ",") == "01-journal.png,02-map.png", "order %v", e.shotsIn(set))
+	must(t, len(e.fake.uploads) == 2 && !e.fake.sawAuthOnUpload, "two unauthenticated uploads")
+	sum, _ := fileMD5(a)
+	found := false
+	for _, id := range e.fake.children["/v1/appScreenshotSets/"+set+"/appScreenshots"] {
+		found = found || e.fake.attr("appScreenshots", id, "sourceFileChecksum") == sum
+	}
+	must(t, found, "checksum sent")
+
+	e.fake.reset()
+	code, out, _ = e.run("media", "diff", "--exit-code")
+	must(t, code == 0, "noop diff:\n%s", out)
+	contains(t, out, "No differences")
+
+	// Rename 01 to 03 (same bytes: kept and moved) and change 02.
+	os.Rename(a, filepath.Join(filepath.Dir(a), "03-journal.png"))
+	e.write("screenshots/en-US/APP_IPHONE_67/02-map.png", png(1320, 2868, false, "c"))
+	code, out, stderr = e.run("media", "push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, "1 upload, 1 remove")
+	must(t, len(e.fake.uploads) == 3, "one more upload, got %d", len(e.fake.uploads))
+	must(t, strings.Join(e.shotsIn(set), ",") == "02-map.png,01-journal.png", "order %v", e.shotsIn(set))
+}
+
+func TestScreenshotsWaitForAnEditableVersion(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("screenshots/en-US/APP_IPHONE_67/01.png", png(1320, 2868, false, ""))
+	code, out, _ := e.run("media", "push", "--yes")
+	must(t, code == 0, "exit %d", code)
+	contains(t, out, "change only on a version being prepared")
+	must(t, len(e.fake.writes()) == 0, "nothing written: %v", paths(e.fake.writes()))
+}
+
+func TestCreativeAssetsUploadOncePlaceEverywhereAndReplace(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.fake.addChild("/v1/appStoreVersions/v1/appStoreVersionLocalizations", "appStoreVersionLocalizations", "vl2",
+		map[string]any{"locale": "de-DE"}, nil)
+	e.write("creative_assets/header.png", png(3840, 1646, false, "h"))
+	e.write("creative_assets/de-DE/search_results.png", png(3840, 2560, false, "s"))
+	code, out, stderr := e.run("media", "push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, "Asset Library")
+	must(t, len(e.fake.children["/v1/appAssetLibraries/lib1/images"]) == 2, "header uploaded once for both locales")
+	must(t, len(e.fake.children["/v1/appStoreVersionLocalizations/vl1/placements"]) == 1, "en-US gets the header")
+	var types []string
+	for _, id := range e.fake.children["/v1/appStoreVersionLocalizations/vl2/placements"] {
+		types = append(types, e.fake.attr("appAssetLibraryPlacements", id, "placementType").(string))
+	}
+	sort.Strings(types)
+	must(t, strings.Join(types, ",") == "APP_STORE_SEARCH_RESULTS_ASSET,PRODUCT_PAGE_HEADER_ASSET", "de-DE placements %v", types)
+
+	code, out, _ = e.run("media", "diff", "--exit-code")
+	must(t, code == 0, "noop diff:\n%s", out)
+
+	e.write("creative_assets/header.png", png(3840, 1646, false, "h2"))
+	e.fake.reset()
+	code, out, stderr = e.run("media", "push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	must(t, len(e.fake.children["/v1/appAssetLibraries/lib1/images"]) == 3, "one new image")
+	must(t, len(e.fake.children["/v1/appStoreVersionLocalizations/vl1/placements"]) == 1, "still one placement on en-US")
+	var deletes []string
+	for _, w := range e.fake.writes() {
+		if w.Method == "DELETE" {
+			deletes = append(deletes, w.Path)
+		}
+	}
+	must(t, len(deletes) == 2, "two old header placements removed: %v", deletes)
+	for _, d := range deletes {
+		must(t, strings.HasPrefix(d, "/v1/appAssetLibraryPlacements/"), "only placements deleted: %s", d)
+	}
+}
+
+func TestMediaValidation(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("creative_assets/header.png", png(3840, 1646, true, ""))
+	e.write("creative_assets/search_results.png", png(1000, 1000, false, ""))
+	for i := 0; i < 11; i++ {
+		e.write("screenshots/en-US/APP_IPHONE_DUO/"+string(rune('a'+i))+".png", png(1398, 2034, false, string(rune('a'+i))))
+	}
+	code, _, stderr := e.run("media", "validate")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "alpha channel")
+	contains(t, stderr, "1000x1000 isn't one of Apple's sizes")
+	contains(t, stderr, "APP_IPHONE_DUO: not in Apple's published API yet")
+	contains(t, stderr, "11 files, the limit is 10")
+}
+
+func TestTextPushNeverTouchesMedia(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("screenshots/en-US/APP_IPHONE_67/01.png", png(1320, 2868, false, ""))
+	code, out, _ := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s", code, out)
+	for _, r := range e.fake.requests {
+		must(t, !strings.Contains(r.Path, "Screenshot"), "text push touched %s", r.Path)
+	}
+}
+
+func TestUnifiedDiff(t *testing.T) {
+	got := strings.Join(unifiedDiff(strings.Split("a\nb\nc\nd\ne", "\n"), strings.Split("a\nb\nC\nd\ne", "\n")), "|")
+	must(t, got == " b|-c|+C| d", "diff %q", got)
+}

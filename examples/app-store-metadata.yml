@@ -1,0 +1,71 @@
+# Copy to .github/workflows/app-store-metadata.yml in your app's repo.
+#
+# - Every pull request that touches metadata/ is validated offline, and, when the API key
+#   secrets are set, diffed against App Store Connect. The diff lands in the job summary.
+# - Pushing to App Store Connect only happens when you run the workflow by hand
+#   (Actions › App Store metadata › Run workflow › action: push).
+#
+# Secrets (Settings › Secrets and variables › Actions): ASC_KEY_ID, ASC_ISSUER_ID and
+# ASC_PRIVATE_KEY (the whole .p8 file, BEGIN/END lines included).
+
+name: App Store metadata
+
+on:
+  pull_request:
+    paths: ["metadata/**", "appbird.json"]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "diff only reads; push writes to App Store Connect (never submits for review)"
+        type: choice
+        options: [diff, push]
+        default: diff
+      media:
+        description: "Also sync screenshots, previews and creative assets"
+        type: boolean
+        default: false
+      app_version:
+        description: "App Store version, e.g. 1.1 (default: the editable one, else the live one)"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: app-store-metadata
+  cancel-in-progress: false
+
+env:
+  # Pin a release of TweetingBirds/appbird.
+  APPBIRD_VERSION: 0.1.0
+
+jobs:
+  metadata:
+    name: App Store metadata
+    runs-on: ubuntu-24.04
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_PRIVATE_KEY: ${{ secrets.ASC_PRIVATE_KEY }}
+      VERSION_ARG: ${{ inputs.app_version && format('--app-version={0}', inputs.app_version) || '' }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install appbird
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/TweetingBirds/appbird/main/install.sh | APPBIRD_DIR="$HOME/.local/bin" sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Validate (offline)
+        run: |
+          appbird validate
+          appbird media validate
+      - name: Diff against App Store Connect
+        if: env.ASC_KEY_ID != '' && (github.event_name == 'pull_request' || inputs.action == 'diff')
+        run: |
+          appbird diff $VERSION_ARG
+          if [ "${{ inputs.media }}" = "true" ]; then appbird media diff $VERSION_ARG; fi
+      - name: Push to App Store Connect
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'push'
+        run: |
+          appbird push --yes $VERSION_ARG
+          if [ "${{ inputs.media }}" = "true" ]; then appbird media push --yes $VERSION_ARG; fi

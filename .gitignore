@@ -1,0 +1,4 @@
+dist/
+*.p8
+private_keys/
+/appbird
