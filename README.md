@@ -23,6 +23,7 @@ Done: 2 change(s) written. Nothing was submitted for review.
 - **Safe by default.** `diff` only reads. `push` shows the diff and asks first. Appbird never submits anything for review, never releases a version, never deletes a localization, and never touches prices, availability, or your App Review contact details.
 - **fastlane-compatible layout.** The text files use fastlane deliver's names (`metadata/en-US/description.txt`), so you can move between the two.
 - **Works for any app.** One small `appbird.json` per app repo.
+- **Easy to hand to an AI agent.** Copy-paste prompts below [set it up for you](#set-it-up-with-an-ai-agent).
 
 ## Install
 
@@ -79,6 +80,75 @@ Appbird reads:
 | `ASC_PRIVATE_KEY` | the file's contents (for CI secrets; `\n` escapes are fine) |
 
 Without either key variable, Appbird looks for `AuthKey_<KEY_ID>.p8` in `./private_keys`, `~/private_keys`, `~/.private_keys` and `~/.appstoreconnect/private_keys`, the same places Apple's `altool` uses.
+
+## Set it up with an AI agent
+
+If you use an AI coding agent (Claude Code, Codex, Cursor, Copilot and the like), you can paste one of these prompts into it from your app's repo. Each one tells the agent to stop and ask before anything that writes to App Store Connect, and to keep your API key out of the repo and out of the chat.
+
+The agent can't create the API key for you. Do the three [API key](#api-key) steps yourself first, and export the variables in the shell the agent runs in (or put the `.p8` file in `~/.appstoreconnect/private_keys/`).
+
+**Install Appbird and start tracking this app's metadata**
+
+```text
+Set up Appbird (https://github.com/TweetingBirds/appbird) in this repo so the App Store
+listing lives in files here. Read its README first and follow it.
+
+1. Install the binary if `appbird version` doesn't work:
+   curl -fsSL https://raw.githubusercontent.com/TweetingBirds/appbird/main/install.sh | sh
+   If /usr/local/bin isn't writable without sudo, use APPBIRD_DIR=$HOME/.local/bin and
+   make sure that folder is on PATH.
+2. Find the app's bundle ID and platform from the Xcode project (PRODUCT_BUNDLE_IDENTIFIER
+   and SDKROOT) and confirm them with me. Platform is IOS, MAC_OS, TV_OS or VISION_OS.
+   Then run: appbird init <bundle id> --platform <platform>
+3. Check that ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY_PATH (or ASC_PRIVATE_KEY) are
+   set. Don't print their values, and never ask me to paste the key into the chat. If
+   they're missing, tell me and wait.
+4. Run `appbird status`, then `appbird pull` to write metadata/ from App Store Connect,
+   then `appbird validate`. Show me the output.
+5. Make sure no .p8 file is inside the repo, then commit appbird.json and metadata/ on a
+   new branch.
+
+Don't run `appbird push` or `appbird media push`. I'll do that myself.
+```
+
+**Add the GitHub Actions workflow**
+
+```text
+Add Appbird's CI workflow to this repo. Copy
+https://raw.githubusercontent.com/TweetingBirds/appbird/main/examples/app-store-metadata.yml
+to .github/workflows/app-store-metadata.yml. Set APPBIRD_VERSION in it to the latest
+release from https://github.com/TweetingBirds/appbird/releases. If appbird.json uses a
+metadata_dir other than "metadata", update the pull_request paths filter to match.
+Then tell me to add ASC_KEY_ID, ASC_ISSUER_ID and ASC_PRIVATE_KEY (the whole .p8 file) as
+repository secrets under Settings › Secrets and variables › Actions. Don't add the secrets
+or the key file yourself. Open a pull request with the change.
+```
+
+**Move from fastlane deliver**
+
+```text
+This repo uses fastlane deliver for App Store metadata. Set up Appbird
+(https://github.com/TweetingBirds/appbird) to read the same text files: install it as
+its README says, run `appbird init <bundle id> --platform <platform>` with the app's
+bundle ID, and set "metadata_dir" in appbird.json to the existing fastlane metadata
+folder (usually fastlane/metadata). Run `appbird validate` and tell me what it reports;
+fastlane-only files (such as primary_category.txt or a default/ folder) may show up there.
+Then run `appbird diff` and show me what differs from App Store Connect.
+Don't move or delete any fastlane files, and don't push. Screenshots use a different
+folder layout in Appbird (see the Media section of its README), so leave them for now.
+```
+
+**Edit the listing**
+
+```text
+Update this app's App Store listing in metadata/ (Appbird, see appbird.json):
+<what you want: new release notes for 1.3, a German localization, sharper keywords, ...>
+Follow the file rules in https://github.com/TweetingBirds/appbird#files: one field per
+file, and respect the character limits (name and subtitle 30, keywords 100, promotional
+text 170, description and release notes 4000). Run `appbird validate` and fix anything
+it reports, then run `appbird diff` and show me the result. Commit on a branch and open a
+pull request. Don't run `appbird push`.
+```
 
 ## Commands
 
