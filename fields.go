@@ -32,6 +32,10 @@ var subscriptionLocFields = []field{
 	{"description", "description", 55},
 }
 
+// In-app purchases (consumable, non-consumable, non-renewing subscription) use the same
+// limits as subscriptions.
+var inAppPurchaseLocFields = subscriptionLocFields
+
 var subscriptionGroupLocFields = []field{
 	{"name", "name", 75},
 	{"custom_app_name", "customAppName", 30},
@@ -61,10 +65,11 @@ var oneLineFields = map[string]bool{"name": true, "subtitle": true, "custom_app_
 
 const reviewNotesLimit = 4000
 const subscriptionReviewNoteLimit = 4000
+const inAppPurchaseReviewNoteLimit = 4000
 
 // Folders inside metadata/ that aren't locales.
 var specialDirs = map[string]bool{
-	"review_information": true, "subscriptions": true, "subscription_groups": true,
+	"review_information": true, "subscriptions": true, "subscription_groups": true, "in_app_purchases": true,
 	"screenshots": true, "previews": true, "creative_assets": true, "testflight": true,
 }
 

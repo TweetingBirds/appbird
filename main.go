@@ -1,7 +1,8 @@
 // Appbird keeps an app's App Store Connect listing in sync with files in its repo.
 //
-// It only ever edits listing text and media. It never submits anything for review, releases a
-// version, deletes a localization, or touches prices or availability. See README.md.
+// It edits listing text, App Info settings and media, and creates a version when asked. It never
+// submits anything for review, releases a version, deletes a localization, or touches prices
+// or availability. See README.md.
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -26,16 +28,19 @@ Usage:
   appbird init <bundle id> [--platform IOS]   write appbird.json here (appbird.macos.json
                                               for MAC_OS, and so on)
   appbird validate                            check metadata/ offline (limits, URLs, locales)
-  appbird status                              list the app's versions and which one is editable
-  appbird diff  [--app-version X.Y] [--build N] [--exit-code]
+  appbird status [--json]                     list the app's versions and which one is editable
+  appbird diff  [--app-version X.Y] [--build N] [--exit-code] [--json]
                                               show what differs (read-only)
   appbird push  [--app-version X.Y] [--build N] [--yes]
                                               write the repo's text to App Store Connect
                                               and TestFlight
   appbird pull  [--app-version X.Y] [--build N] [--locale xx]
                                               write App Store Connect's text into metadata/
-  appbird media validate|diff|push [--only screenshots|previews|creative] [--app-version X.Y]
-                [--exit-code] [--yes]         screenshots, app previews and creative assets
+  appbird media validate|diff|push|pull [--only screenshots|previews|creative] [--app-version X.Y]
+                [--exit-code] [--yes] [--locale xx]
+                                              screenshots, app previews and creative assets
+                                              (pull: screenshots and previews only)
+  appbird create-version <X.Y.Z> [--yes]      create the next App Store version to edit
   appbird version
 
 Every command takes -c <path to appbird.json> and -v (print each API request).
@@ -44,7 +49,7 @@ API key: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY_PATH or ASC_PRIVATE_KEY.
 
 type options struct {
 	config, appVersion, platform, build string
-	verbose, yes, exitCode              bool
+	verbose, yes, exitCode, json        bool
 	locales, only                       multiFlag
 	args                                []string
 }
@@ -69,6 +74,7 @@ func parseOptions(name string, args []string, stderr io.Writer) (*options, error
 	fs.BoolVar(&o.yes, "y", false, "")
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.exitCode, "exit-code", false, "")
+	fs.BoolVar(&o.json, "json", false, "")
 	fs.Var(&o.locales, "locale", "")
 	fs.Var(&o.only, "only", "")
 	// Allow flags before and after positional arguments.
@@ -95,6 +101,7 @@ type app struct {
 	in       io.Reader
 	out, err io.Writer
 	isTTY    bool
+	json     bool // print status and diffs as JSON
 }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
@@ -111,6 +118,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 			return 0
 		}
 		return 2
+	}
+	if o.json {
+		jsonOK := cmd == "status" || cmd == "diff" || (cmd == "media" && len(o.args) == 1 && o.args[0] == "diff")
+		if !jsonOK {
+			fmt.Fprintln(stderr, "appbird: --json works with status, diff and media diff")
+			return 2
+		}
+		a.json = true
 	}
 	var code int
 	switch cmd {
@@ -131,6 +146,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		code, err = a.cmdPull(o)
 	case "media":
 		code, err = a.cmdMedia(o)
+	case "create-version":
+		code, err = a.cmdCreateVersion(o)
 	default:
 		fmt.Fprintf(stderr, "appbird: unknown command %q\n\n%s", cmd, usage)
 		return 2
@@ -217,8 +234,8 @@ func (a *app) cmdValidate(o *options) (int, error) {
 		return 1, err
 	}
 	locales := sortedKeys(m.AppInfo)
-	fmt.Fprintf(a.out, "%s/ is valid: %d locale(s) (%s), %d subscription(s).\n", cfg.MetadataDir, len(locales),
-		firstNonEmpty(strings.Join(locales, ", "), "none"), len(m.Subscriptions))
+	fmt.Fprintf(a.out, "%s/ is valid: %d locale(s) (%s), %d subscription(s), %d in-app purchase(s).\n", cfg.MetadataDir, len(locales),
+		firstNonEmpty(strings.Join(locales, ", "), "none"), len(m.Subscriptions), len(m.InAppPurchases))
 	return 0, nil
 }
 
@@ -235,6 +252,12 @@ func (a *app) cmdStatus(o *options) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	if r.Build, r.BuildVersion, err = fetchBuild(c, cfg, r.App.ID, "", ""); err != nil {
+		return 1, err
+	}
+	if a.json {
+		return 0, a.printJSON(statusJSON(r))
+	}
 	fmt.Fprintf(a.out, "%s (%s), app ID %s\n", r.App.Str("name"), cfg.BundleID, r.App.ID)
 	for _, v := range r.Versions {
 		state, tag := versionState(v), ""
@@ -246,17 +269,21 @@ func (a *app) cmdStatus(o *options) (int, error) {
 		fmt.Fprintf(a.out, "  %8s  %s%s\n", v.Str("versionString"), state, tag)
 	}
 	fmt.Fprintln(a.out, "Locales:", strings.Join(sortedKeys(r.VersionLocs), ", "))
-	b, bv, err := fetchBuild(c, cfg, r.App.ID, "", "")
-	if err != nil {
-		return 1, err
-	}
-	if b == nil {
+	if r.Build == nil {
 		fmt.Fprintln(a.out, "TestFlight: no build yet")
 	} else {
-		r.Build, r.BuildVersion = b, bv
-		fmt.Fprintf(a.out, "TestFlight: newest build %s, %s\n", r.buildLabel(), firstNonEmpty(b.Str("processingState"), "UNKNOWN"))
+		fmt.Fprintf(a.out, "TestFlight: newest build %s, %s\n", r.buildLabel(), firstNonEmpty(r.Build.Str("processingState"), "UNKNOWN"))
 	}
 	return 0, nil
+}
+
+func (a *app) printJSON(v any) error {
+	raw, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(a.out, string(raw))
+	return err
 }
 
 // show prints the plan and mirrors it into the GitHub Actions job summary, if there is one.
@@ -264,7 +291,11 @@ func (a *app) show(p *Plan, r *Remote) {
 	var buf bytes.Buffer
 	printPlan(&buf, p, r)
 	text := strings.TrimRight(buf.String(), "\n")
-	fmt.Fprintln(a.out, text)
+	if a.json {
+		_ = a.printJSON(planJSON(p, r))
+	} else {
+		fmt.Fprintln(a.out, text)
+	}
 	if path := os.Getenv("GITHUB_STEP_SUMMARY"); path != "" {
 		if f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			fmt.Fprintf(f, "```\n%s\n```\n", text)
@@ -290,12 +321,32 @@ func (a *app) confirm(question string, yes bool) (bool, error) {
 	return false, nil
 }
 
+// execute runs the plan in order and stops at the first failure. Every operation is computed
+// from App Store Connect's current state, so running the same command again picks up where
+// this one stopped.
 func (a *app) execute(c *Client, p *Plan) error {
-	for _, op := range p.Operations {
+	for i, op := range p.Operations {
 		fmt.Fprintln(a.out, "→", op.Describe)
-		if err := op.Run(c); err != nil {
-			return err
+		err := op.Run(c)
+		if err == nil {
+			continue
 		}
+		fmt.Fprintf(a.err, "\nStopped at step %d of %d: %s\n  %v\n", i+1, len(p.Operations), op.Describe, err)
+		if i > 0 {
+			fmt.Fprintf(a.err, "Written before it stopped (%d):\n", i)
+			for _, done := range p.Operations[:i] {
+				fmt.Fprintln(a.err, "  ✓", done.Describe)
+			}
+		}
+		fmt.Fprintf(a.err, "Not written (%d):\n", len(p.Operations)-i)
+		for _, rest := range p.Operations[i:] {
+			fmt.Fprintln(a.err, "  ✗", rest.Describe)
+		}
+		var uncertain uncertainError
+		if errors.As(err, &uncertain) {
+			fmt.Fprintln(a.err, "The failed step may or may not have reached App Store Connect.")
+		}
+		return userErr("%d of %d step(s) written. Run the diff again to see what's left; pushing again continues from there.", i, len(p.Operations))
 	}
 	return nil
 }
@@ -343,6 +394,54 @@ func (a *app) cmdDiffPush(o *options, push bool) (int, error) {
 	return 0, nil
 }
 
+var versionStringRE = regexp.MustCompile(`^\d+(\.\d+){0,2}$`)
+
+// cmdCreateVersion creates a new App Store version. Apple copies the previous version's text
+// into it. Nothing is submitted.
+func (a *app) cmdCreateVersion(o *options) (int, error) {
+	if len(o.args) != 1 || !versionStringRE.MatchString(o.args[0]) {
+		return 2, userErr("Pass the new version number: appbird create-version 1.2")
+	}
+	want := o.args[0]
+	cfg, err := findConfig(".", o.config)
+	if err != nil {
+		return 1, err
+	}
+	c, err := a.client(o)
+	if err != nil {
+		return 1, err
+	}
+	r, err := fetchRemote(c, cfg, "", "", false)
+	if err != nil {
+		return 1, err
+	}
+	for _, v := range r.Versions {
+		if v.Str("versionString") == want {
+			return 1, userErr("%s version %s already exists (%s).", cfg.Platform, want, versionState(v))
+		}
+		if editableVersionStates[versionState(v)] {
+			return 1, userErr("Version %s is already being prepared (%s). Apple allows one at a time: edit that one, or change its number in App Store Connect.",
+				v.Str("versionString"), versionState(v))
+		}
+	}
+	ok, err := a.confirm(fmt.Sprintf("Create %s version %s of %s in App Store Connect?", cfg.Platform, want, r.App.Str("name")), o.yes)
+	if err != nil || !ok {
+		return 1, err
+	}
+	v, err := c.Create("appStoreVersions", map[string]any{"platform": cfg.Platform, "versionString": want},
+		map[string]any{"app": rel("apps", r.App.ID)})
+	var uncertain uncertainError
+	if errors.As(err, &uncertain) {
+		return 1, userErr("%v\nThe version may or may not have been created. Run `appbird status` before trying again.", err)
+	}
+	if err != nil {
+		return 1, err
+	}
+	fmt.Fprintf(a.out, "Created version %s (%s). Apple copies the text from the previous version.\n", want, firstNonEmpty(versionState(v), "PREPARE_FOR_SUBMISSION"))
+	fmt.Fprintln(a.out, "Next: `appbird diff` to see what the repo would change. Nothing was submitted for review.")
+	return 0, nil
+}
+
 func (a *app) cmdPull(o *options) (int, error) {
 	cfg, err := findConfig(".", o.config)
 	if err != nil {
@@ -377,14 +476,59 @@ func (a *app) cmdPull(o *options) (int, error) {
 	return 0, nil
 }
 
+func (a *app) cmdMediaPull(o *options, cfg Config) (int, error) {
+	kinds := map[string]bool{"screenshots": true, "previews": true}
+	if len(o.only) > 0 {
+		kinds = map[string]bool{}
+		for _, k := range o.only {
+			if k != "screenshots" && k != "previews" {
+				return 2, userErr("media pull takes --only screenshots or previews (creative assets can't be pulled yet)")
+			}
+			kinds[k] = true
+		}
+	}
+	c, err := a.client(o)
+	if err != nil {
+		return 1, err
+	}
+	r, err := fetchRemote(c, cfg, o.appVersion, "", false)
+	if err != nil {
+		return 1, err
+	}
+	res, err := pullMedia(c, cfg, r, kinds, setOf(o.locales...))
+	if err != nil {
+		return 1, err
+	}
+	for _, n := range res.Notes {
+		fmt.Fprintln(a.out, "note:", n)
+	}
+	v := firstNonEmpty(r.VersionString(), "none")
+	if len(res.Written)+len(res.Removed) == 0 {
+		fmt.Fprintf(a.out, "%s/ media already matches App Store Connect (version %s).\n", cfg.MetadataDir, v)
+		return 0, nil
+	}
+	fmt.Fprintf(a.out, "Wrote %d file(s) and removed %d from version %s:\n", len(res.Written), len(res.Removed), v)
+	for _, w := range res.Written {
+		fmt.Fprintln(a.out, "  +", cfg.Rel(w))
+	}
+	for _, w := range res.Removed {
+		fmt.Fprintln(a.out, "  -", cfg.Rel(w))
+	}
+	fmt.Fprintln(a.out, "Apple re-encodes media, so these aren't your original files. Review with `git status` before committing.")
+	return 0, nil
+}
+
 func (a *app) cmdMedia(o *options) (int, error) {
-	if len(o.args) != 1 || (o.args[0] != "validate" && o.args[0] != "diff" && o.args[0] != "push") {
-		return 2, userErr("Usage: appbird media validate|diff|push")
+	if len(o.args) != 1 || !setOf("validate", "diff", "push", "pull")[o.args[0]] {
+		return 2, userErr("Usage: appbird media validate|diff|push|pull")
 	}
 	action := o.args[0]
 	cfg, err := findConfig(".", o.config)
 	if err != nil {
 		return 1, err
+	}
+	if action == "pull" {
+		return a.cmdMediaPull(o, cfg)
 	}
 	m := loadMedia(cfg)
 	if len(o.only) > 0 {

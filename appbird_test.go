@@ -41,6 +41,7 @@ func setup(t *testing.T, versionState, infoState string) *env {
 	t.Setenv("ASC_PRIVATE_KEY", "")
 	t.Setenv("ASC_API_BASE", fake.server.URL)
 	t.Setenv("GITHUB_STEP_SUMMARY", "")
+	retryDelay = time.Millisecond
 	repo := t.TempDir()
 	os.WriteFile(filepath.Join(repo, "appbird.json"), []byte(`{"bundle_id": "com.example.app"}`), 0o644)
 	old, _ := os.Getwd()
@@ -247,6 +248,105 @@ func TestUnknownSubscriptionListsTheOnesThatExist(t *testing.T) {
 	contains(t, out, "Pro: no group with that reference name; skipped (found: Premium)")
 }
 
+func TestInAppPurchasesUpdateCreateAndPull(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	code, _, stderr := e.run("pull")
+	must(t, code == 0, "pull: %s", stderr)
+	must(t, e.read("in_app_purchases/com.example.coins/en-US/name.txt") == "100 Coins\n", "IAP name pulled")
+	must(t, e.read("in_app_purchases/com.example.coins/review_note.txt") == "Old coin note\n", "IAP review note pulled")
+	_, err := os.Stat(filepath.Join(e.repo, "metadata/in_app_purchases/com.example.annual"))
+	must(t, os.IsNotExist(err), "auto-renewable subscriptions stay under subscriptions/")
+
+	e.write("in_app_purchases/com.example.coins/en-US/description.txt", "A big pile of coins\n")
+	e.write("in_app_purchases/com.example.coins/de-DE/name.txt", "100 Münzen\n")
+	e.write("in_app_purchases/com.example.coins/review_note.txt", "Buy, then check the balance\n")
+	e.write("in_app_purchases/com.example.gems/en-US/name.txt", "Gems\n")
+	e.fake.reset()
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, "com.example.gems: no such in-app purchase in App Store Connect; skipped (found: com.example.coins)")
+	got := paths(e.fake.writes())
+	for _, want := range []string{"PATCH /v1/inAppPurchaseLocalizations/iapl1", "POST /v1/inAppPurchaseLocalizations", "PATCH /v2/inAppPurchases/iap1"} {
+		must(t, has(got, want), "missing %s in %v", want, got)
+	}
+	for _, w := range e.fake.writes() {
+		if w.Method == "POST" {
+			rels := w.Body["data"].(map[string]any)["relationships"].(map[string]any)
+			d := rels["inAppPurchaseV2"].(map[string]any)["data"].(map[string]any)
+			must(t, d["type"] == "inAppPurchases" && d["id"] == "iap1", "related to the IAP: %v", rels)
+		}
+	}
+	os.RemoveAll(filepath.Join(e.repo, "metadata/in_app_purchases/com.example.gems"))
+	code, out, _ = e.run("diff", "--exit-code")
+	must(t, code == 0, "clean after push:\n%s", out)
+
+	e.write("in_app_purchases/com.example.coins/en-US/description.txt", strings.Repeat("x", 56))
+	code, _, stderr = e.run("validate")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "in_app_purchases/com.example.coins/en-US/description: 56 characters, the limit is 55")
+}
+
+func TestAppInfoCategoriesAgeRatingAndContentRights(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.fake.rels[[2]string{"appInfos", "i1"}] = map[string]any{
+		"primaryCategory":   map[string]any{"data": map[string]any{"type": "appCategories", "id": "PRODUCTIVITY"}},
+		"secondaryCategory": map[string]any{"data": nil},
+	}
+	e.fake.resources[[2]string{"apps", "app1"}]["contentRightsDeclaration"] = "DOES_NOT_USE_THIRD_PARTY_CONTENT"
+	code, _, stderr := e.run("pull")
+	must(t, code == 0, "pull: %s", stderr)
+	got := e.read("app_info.json")
+	contains(t, got, `"primary_category": "PRODUCTIVITY"`)
+	contains(t, got, `"secondary_category": null`)
+	contains(t, got, `"content_rights": "DOES_NOT_USE_THIRD_PARTY_CONTENT"`)
+	contains(t, got, `"violenceCartoonOrFantasy": "NONE"`)
+	must(t, !strings.Contains(got, "subcategory"), "empty subcategories aren't written:\n%s", got)
+	code, out, _ := e.run("diff", "--exit-code")
+	must(t, code == 0, "clean after pull:\n%s", out)
+
+	e.write("app_info.json", `{
+  "primary_category": "GAMES",
+  "primary_subcategory_one": "GAMES_PUZZLE",
+  "secondary_category": "UTILITIES",
+  "content_rights": "USES_THIRD_PARTY_CONTENT",
+  "age_rating": {"violenceCartoonOrFantasy": "INFREQUENT_OR_MILD", "gambling": false, "lootBox": true}
+}`)
+	e.fake.reset()
+	code, out, stderr = e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, `app_info/primary_category: "PRODUCTIVITY" → "GAMES"`)
+	contains(t, out, `app_info/age_rating/lootBox: "null" → "true"`)
+	must(t, !strings.Contains(out, "age_rating/gambling"), "unchanged attributes aren't sent:\n%s", out)
+	var patched map[string]any
+	for _, w := range e.fake.writes() {
+		if w.Path == "/v1/appInfos/i1" {
+			patched = w.Body["data"].(map[string]any)["relationships"].(map[string]any)
+		}
+	}
+	must(t, patched != nil && len(patched) == 3, "one PATCH with three relationships: %v", patched)
+	ar := e.fake.resources[[2]string{"ageRatingDeclarations", "ar1"}]
+	must(t, ar["violenceCartoonOrFantasy"] == "INFREQUENT_OR_MILD" && ar["lootBox"] == true, "age rating %v", ar)
+	must(t, e.fake.attr("apps", "app1", "contentRightsDeclaration") == "USES_THIRD_PARTY_CONTENT", "content rights")
+	code, out, _ = e.run("diff", "--exit-code")
+	must(t, code == 0, "clean after push:\n%s", out)
+
+	// On a live version, categories and the age rating wait; content rights doesn't.
+	e.fake.resources[[2]string{"appInfos", "i1"}]["state"] = "READY_FOR_DISTRIBUTION"
+	e.write("app_info.json", `{"primary_category": "BOOKS", "content_rights": "DOES_NOT_USE_THIRD_PARTY_CONTENT"}`)
+	e.fake.reset()
+	code, out, _ = e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s", code, out)
+	contains(t, out, "can't be pushed now")
+	must(t, len(e.fake.writes()) == 1 && e.fake.writes()[0].Path == "/v1/apps/app1", "only content rights: %v", paths(e.fake.writes()))
+
+	e.write("app_info.json", `{"primary_category": "books", "content_rights": "MAYBE", "age_rating": {"x": 3}, "price": 1}`)
+	code, _, stderr = e.run("validate")
+	must(t, code == 1, "exit %d", code)
+	for _, want := range []string{"isn't an App Store category ID", "must be DOES_NOT_USE", "age_rating.x: must be a string", "price: not a key"} {
+		contains(t, stderr, want)
+	}
+}
+
 func TestNewAppStoreLocaleNeedsAName(t *testing.T) {
 	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
 	e.write("fr-FR/subtitle.txt", "Sous-titre\n")
@@ -263,6 +363,112 @@ func TestValidationFailureSendsNothing(t *testing.T) {
 	must(t, code == 1, "exit %d", code)
 	contains(t, stderr, "nothing was sent")
 	must(t, len(e.fake.requests) == 0, "no requests at all")
+}
+
+func TestCreateVersion(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	code, _, stderr := e.run("create-version", "1.0")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "IOS version 1.0 already exists")
+	code, _, stderr = e.run("create-version", "1.1")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "pass --yes")
+	code, _, _ = e.run("create-version", "v1.1")
+	must(t, code == 2, "bad version number: exit %d", code)
+	must(t, len(e.fake.writes()) == 0, "nothing written yet")
+
+	code, out, stderr := e.run("create-version", "1.1", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, "Created version 1.1")
+	w := e.fake.writes()
+	must(t, len(w) == 1 && w[0].Method == "POST" && w[0].Path == "/v1/appStoreVersions", "one create: %v", paths(w))
+	attrs := w[0].Body["data"].(map[string]any)["attributes"].(map[string]any)
+	must(t, attrs["versionString"] == "1.1" && attrs["platform"] == "IOS", "attrs %v", attrs)
+
+	_, out, _ = e.run("status")
+	contains(t, out, "1.1  PREPARE_FOR_SUBMISSION ← editable")
+	code, _, stderr = e.run("create-version", "1.2", "--yes")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "Version 1.1 is already being prepared")
+}
+
+func TestJSONOutput(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	code, out, _ := e.run("status", "--json")
+	must(t, code == 0, "exit %d", code)
+	var status jsonStatus
+	must(t, json.Unmarshal([]byte(out), &status) == nil, "status is JSON:\n%s", out)
+	must(t, status.App.BundleID == "com.example.app" && status.App.Platform == "IOS", "app %+v", status.App)
+	must(t, len(status.Versions) == 1 && status.Versions[0].Live && !status.Versions[0].Editable, "versions %+v", status.Versions)
+	must(t, status.Build != nil && status.Build.Version == "1.1" && status.Build.Build == "45", "build %+v", status.Build)
+
+	e.write("en-US/promotional_text.txt", "New promo\n")
+	e.write("en-US/subtitle.txt", "New subtitle\n")
+	code, out, _ = e.run("diff", "--json", "--exit-code")
+	must(t, code == 2, "exit %d", code)
+	var plan jsonPlan
+	must(t, json.Unmarshal([]byte(out), &plan) == nil, "diff is JSON:\n%s", out)
+	must(t, plan.Differs && plan.ChangeCount == 1 && plan.Version.Version == "1.0", "plan %+v", plan)
+	must(t, plan.Build != nil && plan.Build.Build == "45", "plan build %+v", plan.Build)
+	must(t, plan.Steps[0].Changes[0].Field == "en-US/promotional_text" && plan.Steps[0].Changes[0].New == "New promo", "steps %+v", plan.Steps)
+	must(t, len(plan.Waiting) == 1 && plan.Waiting[0].Field == "en-US/subtitle" && plan.Waiting[0].Reason != "", "waiting %+v", plan.Waiting)
+
+	code, _, stderr := e.run("push", "--json")
+	must(t, code == 2, "push --json: exit %d", code)
+	contains(t, stderr, "--json works with status, diff and media diff")
+}
+
+// ---- failures -------------------------------------------------------------------------------
+
+func TestPushRetriesAPatchAfterAServerError(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("en-US/description.txt", "New description.\n")
+	e.fake.failNext("PATCH", "/v1/appStoreVersionLocalizations/vl1", 500, 2)
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	must(t, e.fake.attr("appStoreVersionLocalizations", "vl1", "description") == "New description.", "written on the third try")
+}
+
+func TestPushNeverRetriesACreateAndReportsWhatWasWritten(t *testing.T) {
+	for _, status := range []int{500, -1} {
+		e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+		e.write("en-US/description.txt", "New description.\n")
+		e.write("de-DE/description.txt", "Neu.\n")
+		e.write("fr-FR/name.txt", "Exemple\n")
+		e.fake.failNext("POST", "/v1/appInfoLocalizations", status, 1)
+		code, out, stderr := e.run("push", "--yes")
+		must(t, code == 1, "status %d: exit %d", status, code)
+		posts := 0
+		for _, w := range e.fake.writes() {
+			if w.Method == "POST" && w.Path == "/v1/appInfoLocalizations" {
+				posts++
+			}
+		}
+		must(t, posts == 1, "status %d: the create was sent %d times", status, posts)
+		contains(t, out, "→ add App Info locale fr-FR")
+		contains(t, stderr, "Stopped at step 1 of 3: add App Info locale fr-FR")
+		contains(t, stderr, "✗ update 1.0 en-US")
+		contains(t, stderr, "may or may not have reached App Store Connect")
+		contains(t, stderr, "0 of 3 step(s) written")
+	}
+}
+
+func TestPushReportsStepsWrittenBeforeAFailure(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("en-US/subtitle.txt", "New subtitle\n")
+	e.write("en-US/description.txt", "New description.\n")
+	e.fake.failNext("PATCH", "/v1/appStoreVersionLocalizations/vl1", 409, 1)
+	code, _, stderr := e.run("push", "--yes")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "✓ update App Info en-US")
+	contains(t, stderr, "Injected failure")
+	contains(t, stderr, "1 of 2 step(s) written")
+	must(t, !strings.Contains(stderr, "may or may not"), "a 409 is a clear refusal")
+	// Pushing again only sends what's left.
+	e.fake.reset()
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	must(t, len(e.fake.writes()) == 1, "only the failed step again: %v", paths(e.fake.writes()))
 }
 
 // ---- pull and EULA --------------------------------------------------------------------------
@@ -357,6 +563,45 @@ func TestScreenshotsCreateNoopReplaceAndReorder(t *testing.T) {
 	must(t, strings.Join(e.shotsIn(set), ",") == "02-map.png,01-journal.png", "order %v", e.shotsIn(set))
 }
 
+func TestMediaPullMatchesWhatWasUploaded(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("screenshots/en-US/APP_IPHONE_67/journal.png", png(1320, 2868, false, "a"))
+	e.write("screenshots/en-US/APP_IPHONE_67/map.png", png(1320, 2868, false, "b"))
+	e.write("previews/en-US/IPHONE_67/01-tour.mov", "movie")
+	code, out, stderr := e.run("media", "push", "--yes")
+	must(t, code == 0, "push: %d %s%s", code, out, stderr)
+	os.RemoveAll(filepath.Join(e.repo, "metadata/screenshots"))
+	os.RemoveAll(filepath.Join(e.repo, "metadata/previews"))
+
+	e.fake.reset()
+	code, out, stderr = e.run("media", "pull")
+	must(t, code == 0, "pull: %d %s%s", code, out, stderr)
+	must(t, len(e.fake.writes()) == 0, "pull doesn't write: %v", paths(e.fake.writes()))
+	must(t, !e.fake.sawAuthOnUpload, "CDN downloads carry no token")
+	contains(t, out, "+ metadata/screenshots/en-US/APP_IPHONE_67/01-journal.png")
+	contains(t, out, "+ metadata/screenshots/en-US/APP_IPHONE_67/02-map.png")
+	contains(t, out, "+ metadata/previews/en-US/IPHONE_67/01-tour.mov")
+	contains(t, e.read("screenshots/en-US/APP_IPHONE_67/01-journal.png"), "re-encoded")
+
+	// The downloads differ from the uploads, but count as them.
+	code, out, _ = e.run("media", "diff", "--exit-code")
+	must(t, code == 0, "diff after pull:\n%s", out)
+	_, out, _ = e.run("media", "pull")
+	contains(t, out, "already matches")
+
+	// Changing a pulled file makes it a new upload.
+	e.write("screenshots/en-US/APP_IPHONE_67/02-map.png", png(1320, 2868, false, "c"))
+	code, out, _ = e.run("media", "diff", "--exit-code")
+	must(t, code == 2, "diff after an edit: %d\n%s", code, out)
+	contains(t, out, "1 upload, 1 remove")
+
+	// Pulling again puts App Store Connect's set back.
+	_, out, _ = e.run("media", "pull", "--only", "screenshots")
+	contains(t, out, "Wrote 2 file(s)")
+	code, out, _ = e.run("media", "diff", "--exit-code")
+	must(t, code == 0, "diff after the second pull:\n%s", out)
+}
+
 func TestScreenshotsWaitForAnEditableVersion(t *testing.T) {
 	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
 	e.write("screenshots/en-US/APP_IPHONE_67/01.png", png(1320, 2868, false, ""))
@@ -423,8 +668,8 @@ func TestMediaValidation(t *testing.T) {
 func TestTextPushNeverTouchesMedia(t *testing.T) {
 	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
 	e.write("screenshots/en-US/APP_IPHONE_67/01.png", png(1320, 2868, false, ""))
-	code, out, _ := e.run("push", "--yes")
-	must(t, code == 0, "exit %d: %s", code, out)
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
 	for _, r := range e.fake.requests {
 		must(t, !strings.Contains(r.Path, "Screenshot"), "text push touched %s", r.Path)
 	}
