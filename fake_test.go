@@ -323,6 +323,9 @@ func (f *fakeASC) handle(w http.ResponseWriter, r *http.Request) {
 				"offset": 0, "length": size, "requestHeaders": []any{map[string]any{"name": "Content-Type", "value": "application/octet-stream"}}}}
 			attrs["state"] = "AWAITING_UPLOAD"
 		}
+		if rtype == "appStoreVersions" {
+			attrs["appVersionState"] = "PREPARE_FOR_SUBMISSION"
+		}
 		if rtype == "appStoreReviewDetails" {
 			f.resources[[2]string{rtype, id}] = attrs
 			f.single["/v1/"+parentType+"/"+parentID+"/appStoreReviewDetail"] = id

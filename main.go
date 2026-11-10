@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -36,6 +37,7 @@ Usage:
                 [--exit-code] [--yes] [--locale xx]
                                               screenshots, app previews and creative assets
                                               (pull: screenshots and previews only)
+  appbird create-version <X.Y.Z> [--yes]     create the next App Store version to edit
   appbird version
 
 Every command takes -c <path to appbird.json> and -v (print each API request).
@@ -130,6 +132,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		code, err = a.cmdPull(o)
 	case "media":
 		code, err = a.cmdMedia(o)
+	case "create-version":
+		code, err = a.cmdCreateVersion(o)
 	default:
 		fmt.Fprintf(stderr, "appbird: unknown command %q\n\n%s", cmd, usage)
 		return 2
@@ -349,6 +353,54 @@ func (a *app) cmdDiffPush(o *options, push bool) (int, error) {
 	if len(p.Locked) > 0 {
 		fmt.Fprintf(a.out, "%d change(s) are waiting for an editable version.\n", len(p.Locked))
 	}
+	return 0, nil
+}
+
+var versionStringRE = regexp.MustCompile(`^\d+(\.\d+){0,2}$`)
+
+// cmdCreateVersion creates a new App Store version. Apple copies the previous version's text
+// into it. Nothing is submitted.
+func (a *app) cmdCreateVersion(o *options) (int, error) {
+	if len(o.args) != 1 || !versionStringRE.MatchString(o.args[0]) {
+		return 2, userErr("Pass the new version number: appbird create-version 1.2")
+	}
+	want := o.args[0]
+	cfg, err := findConfig(".", o.config)
+	if err != nil {
+		return 1, err
+	}
+	c, err := a.client(o)
+	if err != nil {
+		return 1, err
+	}
+	r, err := fetchRemote(c, cfg, "", false)
+	if err != nil {
+		return 1, err
+	}
+	for _, v := range r.Versions {
+		if v.Str("versionString") == want {
+			return 1, userErr("%s version %s already exists (%s).", cfg.Platform, want, versionState(v))
+		}
+		if editableVersionStates[versionState(v)] {
+			return 1, userErr("Version %s is already being prepared (%s). Apple allows one at a time: edit that one, or change its number in App Store Connect.",
+				v.Str("versionString"), versionState(v))
+		}
+	}
+	ok, err := a.confirm(fmt.Sprintf("Create %s version %s of %s in App Store Connect?", cfg.Platform, want, r.App.Str("name")), o.yes)
+	if err != nil || !ok {
+		return 1, err
+	}
+	v, err := c.Create("appStoreVersions", map[string]any{"platform": cfg.Platform, "versionString": want},
+		map[string]any{"app": rel("apps", r.App.ID)})
+	var uncertain uncertainError
+	if errors.As(err, &uncertain) {
+		return 1, userErr("%v\nThe version may or may not have been created. Run `appbird status` before trying again.", err)
+	}
+	if err != nil {
+		return 1, err
+	}
+	fmt.Fprintf(a.out, "Created version %s (%s). Apple copies the text from the previous version.\n", want, firstNonEmpty(versionState(v), "PREPARE_FOR_SUBMISSION"))
+	fmt.Fprintln(a.out, "Next: `appbird diff` to see what the repo would change. Nothing was submitted for review.")
 	return 0, nil
 }
 

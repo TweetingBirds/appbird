@@ -365,6 +365,33 @@ func TestValidationFailureSendsNothing(t *testing.T) {
 	must(t, len(e.fake.requests) == 0, "no requests at all")
 }
 
+func TestCreateVersion(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	code, _, stderr := e.run("create-version", "1.0")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "IOS version 1.0 already exists")
+	code, _, stderr = e.run("create-version", "1.1")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "pass --yes")
+	code, _, _ = e.run("create-version", "v1.1")
+	must(t, code == 2, "bad version number: exit %d", code)
+	must(t, len(e.fake.writes()) == 0, "nothing written yet")
+
+	code, out, stderr := e.run("create-version", "1.1", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, "Created version 1.1")
+	w := e.fake.writes()
+	must(t, len(w) == 1 && w[0].Method == "POST" && w[0].Path == "/v1/appStoreVersions", "one create: %v", paths(w))
+	attrs := w[0].Body["data"].(map[string]any)["attributes"].(map[string]any)
+	must(t, attrs["versionString"] == "1.1" && attrs["platform"] == "IOS", "attrs %v", attrs)
+
+	_, out, _ = e.run("status")
+	contains(t, out, "1.1  PREPARE_FOR_SUBMISSION ← editable")
+	code, _, stderr = e.run("create-version", "1.2", "--yes")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "Version 1.1 is already being prepared")
+}
+
 // ---- failures -------------------------------------------------------------------------------
 
 func TestPushRetriesAPatchAfterAServerError(t *testing.T) {
