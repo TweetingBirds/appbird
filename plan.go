@@ -273,6 +273,8 @@ func buildPlan(m *LocalMetadata, r *Remote) *Plan {
 		}
 	}
 
+	planTestFlight(p, m, r)
+
 	var unmanaged []string
 	for _, loc := range sortedKeys(r.VersionLocs) {
 		if _, ok := m.Version[loc]; !ok {
@@ -340,6 +342,53 @@ func planProducts(p *Plan, k productKind, local map[string]*localSubscription, r
 			default:
 				p.Notes = append(p.Notes, k.dir+"/"+pid+"/"+loc+": a new locale needs name.txt; skipped")
 			}
+		}
+	}
+}
+
+// planTestFlight writes testflight/: test information for the app, and What to Test for the
+// newest build (or the one picked with --app-version and --build). TestFlight text can change
+// at any time, so nothing here waits for an editable App Store version.
+func planTestFlight(p *Plan, m *LocalMetadata, r *Remote) {
+	blabel := r.buildLabel()
+	for _, loc := range sortedKeys(m.BetaApp) {
+		if values := m.BetaApp[loc]; len(values) > 0 {
+			existing := r.BetaAppLocs[loc]
+			attrs, changes := diffFields("testflight/"+loc+"/", values, existing, betaAppFields)
+			switch {
+			case len(changes) == 0:
+			case existing != nil:
+				id := existing.ID
+				p.add("update TestFlight test information "+loc,
+					func(c *Client) error { return c.Patch("betaAppLocalizations", id, attrs) }, changes)
+			default:
+				appID, a := r.App.ID, createAttrs(loc, attrs)
+				p.add("add TestFlight test information locale "+loc, func(c *Client) error {
+					_, err := c.Create("betaAppLocalizations", a, map[string]any{"app": rel("apps", appID)})
+					return err
+				}, changes)
+			}
+		}
+		values := m.BetaBuild[loc]
+		if len(values) == 0 {
+			continue
+		}
+		existing := r.BuildLocs[loc]
+		attrs, changes := diffFields("testflight/"+loc+"/", values, existing, betaBuildFields)
+		switch {
+		case len(changes) == 0:
+		case r.Build == nil:
+			p.lock("no TestFlight build found; upload one, or pick one with --build", changes...)
+		case existing != nil:
+			id := existing.ID
+			p.add(fmt.Sprintf("update TestFlight build %s %s", blabel, loc),
+				func(c *Client) error { return c.Patch("betaBuildLocalizations", id, attrs) }, changes)
+		default:
+			bid, a := r.Build.ID, createAttrs(loc, attrs)
+			p.add(fmt.Sprintf("add TestFlight build %s locale %s", blabel, loc), func(c *Client) error {
+				_, err := c.Create("betaBuildLocalizations", a, map[string]any{"build": rel("builds", bid)})
+				return err
+			}, changes)
 		}
 	}
 }
@@ -430,6 +479,22 @@ func pull(cfg Config, r *Remote, only map[string]bool) ([]string, error) {
 			}
 		}
 	}
+	for _, loc := range sortedKeys(r.BetaAppLocs) {
+		if keep(loc) {
+			for _, f := range betaAppFields {
+				if v := r.BetaAppLocs[loc].Str(f.API); v != "" || f.File == "description" {
+					try(put(v, "testflight", loc, f.File+".txt"))
+				}
+			}
+		}
+	}
+	for _, loc := range sortedKeys(r.BuildLocs) {
+		if keep(loc) {
+			for _, f := range betaBuildFields {
+				try(put(r.BuildLocs[loc].Str(f.API), "testflight", loc, f.File+".txt"))
+			}
+		}
+	}
 	return written, err
 }
 
@@ -452,6 +517,9 @@ func printChange(w io.Writer, ch *Change) {
 
 func printPlan(w io.Writer, p *Plan, r *Remote) {
 	fmt.Fprintln(w, r.describe())
+	if r.Build != nil {
+		fmt.Fprintf(w, "TestFlight build %s\n", r.buildLabel())
+	}
 	if len(p.Operations) == 0 && len(p.Locked) == 0 {
 		fmt.Fprintln(w, "No differences: App Store Connect matches the repo.")
 	}

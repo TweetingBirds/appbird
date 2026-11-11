@@ -400,6 +400,7 @@ func TestJSONOutput(t *testing.T) {
 	must(t, json.Unmarshal([]byte(out), &status) == nil, "status is JSON:\n%s", out)
 	must(t, status.App.BundleID == "com.example.app" && status.App.Platform == "IOS", "app %+v", status.App)
 	must(t, len(status.Versions) == 1 && status.Versions[0].Live && !status.Versions[0].Editable, "versions %+v", status.Versions)
+	must(t, status.Build != nil && status.Build.Version == "1.1" && status.Build.Build == "45", "build %+v", status.Build)
 
 	e.write("en-US/promotional_text.txt", "New promo\n")
 	e.write("en-US/subtitle.txt", "New subtitle\n")
@@ -408,6 +409,7 @@ func TestJSONOutput(t *testing.T) {
 	var plan jsonPlan
 	must(t, json.Unmarshal([]byte(out), &plan) == nil, "diff is JSON:\n%s", out)
 	must(t, plan.Differs && plan.ChangeCount == 1 && plan.Version.Version == "1.0", "plan %+v", plan)
+	must(t, plan.Build != nil && plan.Build.Build == "45", "plan build %+v", plan.Build)
 	must(t, plan.Steps[0].Changes[0].Field == "en-US/promotional_text" && plan.Steps[0].Changes[0].New == "New promo", "steps %+v", plan.Steps)
 	must(t, len(plan.Waiting) == 1 && plan.Waiting[0].Field == "en-US/subtitle" && plan.Waiting[0].Reason != "", "waiting %+v", plan.Waiting)
 
@@ -481,7 +483,11 @@ func TestPullThenDiffIsClean(t *testing.T) {
 	must(t, e.read("review_information/notes.txt") == "Old notes\n", "notes")
 	must(t, e.read("eula.txt") == "Old EULA\n", "eula")
 	must(t, e.read("subscriptions/com.example.annual/en-US/name.txt") == "Annual\n", "subscription")
-	_, err := os.Stat(filepath.Join(e.repo, "metadata/review_information/contact_email.txt"))
+	must(t, e.read("testflight/en-US/what_to_test.txt") == "Old test notes\n", "what to test")
+	must(t, e.read("testflight/en-US/feedback_email.txt") == "beta@example.com\n", "feedback email")
+	_, err := os.Stat(filepath.Join(e.repo, "metadata/testflight/en-US/marketing_url.txt"))
+	must(t, os.IsNotExist(err), "empty beta URLs aren't pulled")
+	_, err = os.Stat(filepath.Join(e.repo, "metadata/review_information/contact_email.txt"))
 	must(t, os.IsNotExist(err), "contact details never pulled")
 	must(t, len(e.fake.writes()) == 0, "pull doesn't write to App Store Connect")
 	code, out, _ := e.run("diff", "--exit-code")
@@ -715,4 +721,107 @@ func TestInitWritesAConfigPerPlatform(t *testing.T) {
 	code, _, errOut = e.run("init", "com.example.app", "--platform", "WATCH_OS")
 	must(t, code == 2, "expected an unknown platform to fail, got %d", code)
 	contains(t, errOut, "Unknown platform")
+}
+
+// ---- TestFlight -----------------------------------------------------------------------------
+
+func (e *env) query(path string) []string {
+	var out []string
+	for _, r := range e.fake.requests {
+		if r.Method == "GET" && r.Path == path {
+			out = append(out, r.Query.Encode())
+		}
+	}
+	return out
+}
+
+func TestTestFlightPushesToTheNewestBuildOnALiveVersion(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	e.write("testflight/en-US/what_to_test.txt", "Try the new map.\n")
+	e.write("testflight/en-US/description.txt", "A journal for every visit.\n")
+	e.write("testflight/de-DE/what_to_test.txt", "Teste die neue Karte.\n")
+	e.write("testflight/de-DE/feedback_email.txt", "beta@example.de\n")
+	code, out, _ := e.run("diff", "--exit-code")
+	must(t, code == 2, "exit %d:\n%s", code, out)
+	contains(t, out, "TestFlight build 1.1 (45)")
+	contains(t, out, `testflight/en-US/what_to_test: "Old test notes" → "Try the new map."`)
+	must(t, len(e.fake.writes()) == 0, "diff wrote %v", paths(e.fake.writes()))
+	q := e.query("/v1/builds")
+	must(t, len(q) == 1, "one build lookup: %v", q)
+	for _, want := range []string{"filter%5Bapp%5D=app1", "filter%5BpreReleaseVersion.platform%5D=IOS",
+		"filter%5Bexpired%5D=false", "sort=-uploadedDate", "limit=1"} {
+		contains(t, q[0], want)
+	}
+
+	e.fake.reset()
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	got := paths(e.fake.writes())
+	for _, want := range []string{"PATCH /v1/betaBuildLocalizations/bbl1", "POST /v1/betaBuildLocalizations",
+		"PATCH /v1/betaAppLocalizations/bal1", "POST /v1/betaAppLocalizations"} {
+		must(t, has(got, want), "missing %s in %v", want, got)
+	}
+	must(t, len(got) == 4, "only TestFlight writes: %v", got)
+	must(t, e.fake.attr("betaBuildLocalizations", "bbl1", "whatsNew") == "Try the new map.", "what to test written")
+	must(t, e.fake.attr("betaAppLocalizations", "bal1", "feedbackEmail") == "beta@example.com", "unmanaged field untouched")
+	de := e.fake.children["/v1/builds/b1/betaBuildLocalizations"]
+	must(t, len(de) == 2 && e.fake.attr("betaBuildLocalizations", de[1], "locale") == "de-DE", "de-DE added to the build: %v", de)
+	for _, p := range got {
+		must(t, !strings.Contains(p, "Submission"), "never submits for beta review: %s", p)
+	}
+
+	e.fake.reset()
+	code, out, _ = e.run("diff", "--exit-code")
+	must(t, code == 0, "second diff exit %d:\n%s", code, out)
+}
+
+func TestTestFlightBuildAndVersionFlags(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	os.WriteFile(filepath.Join(e.repo, "appbird.json"),
+		[]byte(`{"bundle_id": "com.example.app", "platform": "MAC_OS"}`), 0o644)
+	e.write("testflight/en-US/what_to_test.txt", "Old test notes\n")
+	code, _, stderr := e.run("diff", "--build", "45", "--app-version", "1.0")
+	must(t, code == 0, "exit %d: %s", code, stderr)
+	q := e.query("/v1/builds")
+	must(t, len(q) == 1, "one build lookup: %v", q)
+	contains(t, q[0], "filter%5Bversion%5D=45")
+	contains(t, q[0], "filter%5BpreReleaseVersion.version%5D=1.0")
+	contains(t, q[0], "filter%5BpreReleaseVersion.platform%5D=MAC_OS")
+}
+
+func TestTestFlightWithoutABuildWaits(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.fake.children["/v1/builds"] = nil
+	e.write("testflight/en-US/what_to_test.txt", "Try the new map.\n")
+	e.write("testflight/en-US/description.txt", "New beta description\n")
+	code, out, stderr := e.run("push", "--yes")
+	must(t, code == 0, "exit %d: %s%s", code, out, stderr)
+	contains(t, out, "can't be pushed now (no TestFlight build found")
+	got := paths(e.fake.writes())
+	must(t, len(got) == 1 && got[0] == "PATCH /v1/betaAppLocalizations/bal1", "only the app's test info: %v", got)
+	code, _, _ = e.run("diff", "--exit-code")
+	must(t, code == 2, "still different: %d", code)
+}
+
+func TestTestFlightValidation(t *testing.T) {
+	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	e.write("testflight/en-US/what_to_test.txt", strings.Repeat("x", 4001))
+	e.write("testflight/en-US/feedback_email.txt", "not an email")
+	e.write("testflight/en-US/privacy_url.txt", "example.com")
+	e.write("testflight/en-US/notes.txt", "?")
+	e.write("testflight/es-419/description.txt", "Hola")
+	code, _, stderr := e.run("validate")
+	must(t, code == 1, "exit %d", code)
+	contains(t, stderr, "testflight/en-US/what_to_test: 4001 characters, the limit is 4000")
+	contains(t, stderr, "testflight/en-US/feedback_email: not an email address")
+	contains(t, stderr, "testflight/en-US/privacy_url: not a URL")
+	contains(t, stderr, "ignored (not a field appbird knows): metadata/testflight/en-US/notes.txt")
+	contains(t, stderr, "es-419: not a listing locale")
+}
+
+func TestStatusShowsTheNewestBuild(t *testing.T) {
+	e := setup(t, "READY_FOR_DISTRIBUTION", "READY_FOR_DISTRIBUTION")
+	code, out, stderr := e.run("status")
+	must(t, code == 0, "exit %d: %s", code, stderr)
+	contains(t, out, "TestFlight: newest build 1.1 (45), VALID")
 }

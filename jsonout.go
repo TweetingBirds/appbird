@@ -21,6 +21,7 @@ type jsonStatus struct {
 	App      jsonApp       `json:"app"`
 	Versions []jsonVersion `json:"versions"`
 	Locales  []string      `json:"locales"`
+	Build    *jsonBuild    `json:"testflight_build"`
 }
 
 type jsonChange struct {
@@ -38,6 +39,7 @@ type jsonStep struct {
 type jsonPlan struct {
 	App         jsonApp      `json:"app"`
 	Version     *jsonVersion `json:"version"`
+	Build       *jsonBuild   `json:"testflight_build"`
 	Differs     bool         `json:"differs"`
 	ChangeCount int          `json:"change_count"`
 	Steps       []jsonStep   `json:"steps"`
@@ -55,8 +57,22 @@ func versionJSON(v *Resource) jsonVersion {
 		Editable: editableVersionStates[state], Live: liveVersionStates[state]}
 }
 
+// jsonBuild is the TestFlight build that what_to_test.txt goes to.
+type jsonBuild struct {
+	Version         string `json:"version"`
+	Build           string `json:"build"`
+	ProcessingState string `json:"processing_state"`
+}
+
+func buildJSON(r *Remote) *jsonBuild {
+	if r.Build == nil {
+		return nil
+	}
+	return &jsonBuild{Version: r.BuildVersion, Build: r.Build.Str("version"), ProcessingState: r.Build.Str("processingState")}
+}
+
 func statusJSON(r *Remote) jsonStatus {
-	out := jsonStatus{App: appJSON(r), Versions: []jsonVersion{}, Locales: sortedKeys(r.VersionLocs)}
+	out := jsonStatus{App: appJSON(r), Versions: []jsonVersion{}, Locales: sortedKeys(r.VersionLocs), Build: buildJSON(r)}
 	for _, v := range r.Versions {
 		out.Versions = append(out.Versions, versionJSON(v))
 	}
@@ -65,7 +81,7 @@ func statusJSON(r *Remote) jsonStatus {
 
 func planJSON(p *Plan, r *Remote) jsonPlan {
 	out := jsonPlan{App: appJSON(r), Steps: []jsonStep{}, Waiting: []jsonChange{}, Notes: []string{},
-		ChangeCount: p.ChangeCount(), Differs: len(p.Operations) > 0 || len(p.Locked) > 0}
+		ChangeCount: p.ChangeCount(), Differs: len(p.Operations) > 0 || len(p.Locked) > 0, Build: buildJSON(r)}
 	if r.Version != nil {
 		v := versionJSON(r.Version)
 		out.Version = &v
