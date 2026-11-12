@@ -99,3 +99,25 @@ func planJSON(p *Plan, r *Remote) jsonPlan {
 	out.Notes = append(out.Notes, p.Notes...)
 	return out
 }
+
+type jsonCheck struct {
+	App             jsonApp      `json:"app"`
+	Version         *jsonVersion `json:"version"`
+	FirstSubmission bool         `json:"first_submission"`
+	Ready           bool         `json:"ready"`
+	PendingChanges  int          `json:"pending_changes"` // repo changes to push first
+	Problems        []finding    `json:"problems"`
+	Warnings        []finding    `json:"warnings"`
+	NotChecked      []string     `json:"not_checked"`
+}
+
+func checkJSON(rd *readiness, r *Remote) jsonCheck {
+	out := jsonCheck{App: appJSON(r), FirstSubmission: rd.First, Ready: rd.Ready(), PendingChanges: rd.Pending,
+		Problems: append([]finding{}, rd.Problems...), Warnings: append([]finding{}, rd.Warnings...),
+		NotChecked: append([]string{}, rd.NotChecked...)}
+	if r.Version != nil {
+		v := versionJSON(r.Version)
+		out.Version = &v
+	}
+	return out
+}

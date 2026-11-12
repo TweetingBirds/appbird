@@ -415,7 +415,7 @@ func TestJSONOutput(t *testing.T) {
 
 	code, _, stderr := e.run("push", "--json")
 	must(t, code == 2, "push --json: exit %d", code)
-	contains(t, stderr, "--json works with status, diff and media diff")
+	contains(t, stderr, "--json works with status, diff, check and media diff")
 }
 
 // ---- failures -------------------------------------------------------------------------------
