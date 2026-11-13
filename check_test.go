@@ -62,8 +62,11 @@ func TestCheckFirstSubmissionListsWhatsMissing(t *testing.T) {
 func TestCheckReadyThenPendingThenMissing(t *testing.T) {
 	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
 	makeReady(e)
+	// Optional attributes left empty on a finished questionnaire aren't flagged.
+	e.fake.resources[[2]string{"ageRatingDeclarations", "ar1"}]["gracRatingClassificationNumber"] = nil
 	code, out, _ := e.run("check")
 	must(t, code == 0, "exit %d:\n%s", code, out)
+	must(t, !strings.Contains(out, "age_rating"), "no age rating warning:\n%s", out)
 	contains(t, out, "Build 45")
 	contains(t, out, "! screenshots/en-US: no iPad screenshots")
 	contains(t, out, "Ready to submit in App Store Connect")
