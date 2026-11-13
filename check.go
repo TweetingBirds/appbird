@@ -263,7 +263,9 @@ type shotRule struct {
 
 var shotRules = map[string][]shotRule{
 	"IOS": {
-		{"APP_IPHONE_", []string{"APP_IPHONE_67", "APP_IPHONE_65"}, "iPhone"},
+		// App Store Connect now offers the 6.3-inch (Dynamic Island, medium display) set as the
+		// iPhone base and scales it down, so it counts as well.
+		{"APP_IPHONE_", []string{"APP_IPHONE_67", "APP_IPHONE_65", "APP_IPHONE_61"}, "iPhone"},
 		{"APP_IPAD_", []string{"APP_IPAD_PRO_3GEN_129", "APP_IPAD_PRO_129"}, "iPad"},
 	},
 	"MAC_OS":    {{"APP_DESKTOP", []string{"APP_DESKTOP"}, "Mac"}},
@@ -272,7 +274,7 @@ var shotRules = map[string][]shotRule{
 }
 
 var sizeNames = map[string]string{
-	"APP_IPHONE_67": "6.9-inch", "APP_IPHONE_65": "6.5-inch",
+	"APP_IPHONE_67": "6.9-inch", "APP_IPHONE_65": "6.5-inch", "APP_IPHONE_61": "6.3-inch",
 	"APP_IPAD_PRO_3GEN_129": "13-inch", "APP_IPAD_PRO_129": "12.9-inch",
 }
 
