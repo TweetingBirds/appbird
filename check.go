@@ -47,9 +47,12 @@ var releasedVersionStates = setOf("READY_FOR_DISTRIBUTION", "READY_FOR_SALE", "R
 var submittedVersionStates = setOf("WAITING_FOR_REVIEW", "IN_REVIEW", "ACCEPTED", "PENDING_APPLE_RELEASE",
 	"PENDING_DEVELOPER_RELEASE", "PROCESSING_FOR_DISTRIBUTION", "WAITING_FOR_EXPORT_COMPLIANCE")
 
-// Age rating attributes that may be null on a finished questionnaire.
+// Age rating attributes that may be null on a finished questionnaire. gracRatingClassificationNumber
+// is the classification number from Korea's Game Rating and Administration Committee, which only
+// rated games have; App Store Connect shows Korea's rating without it.
 var optionalAgeRatingAttrs = setOf("kidsAgeBand", "ageRatingOverride", "ageRatingOverrideV2",
-	"koreaAgeRatingOverride", "developerAgeRatingInfoUrl", "seventeenPlus", "gamblingAndContests")
+	"koreaAgeRatingOverride", "gracRatingClassificationNumber", "developerAgeRatingInfoUrl",
+	"seventeenPlus", "gamblingAndContests")
 
 // checkExtras is what check reads beyond fetchRemote.
 type checkExtras struct {
