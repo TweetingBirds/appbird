@@ -344,7 +344,7 @@ func checkScreenshots(rd *readiness, cfg Config, media *LocalMedia, r *Remote, x
 		need := strings.Join(sizes, " or ")
 		switch {
 		case total > 0 && big == 0:
-			rd.problem("screenshots/"+loc, "%s screenshots need a %s set; Apple scales the smaller sizes from it.", rule.device, need)
+			rd.warn("screenshots/"+loc, "no %s set for %s. App Store Connect prefers one and scales the smaller sizes from it.", need, rule.device)
 		case total == 0 && len(rules) > 1:
 			rd.warn("screenshots/"+loc, "no %s screenshots. Apple requires a %s set if the build runs on %s.", rule.device, need, rule.device)
 		}
