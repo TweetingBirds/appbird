@@ -36,6 +36,9 @@ Usage:
                                               and TestFlight
   appbird pull  [--app-version X.Y] [--build N] [--locale xx]
                                               write App Store Connect's text into metadata/
+  appbird check [--app-version X.Y] [--json]  is the version ready to submit? (read-only;
+                                              lists what's missing, especially for a
+                                              first submission)
   appbird media validate|diff|push|pull [--only screenshots|previews|creative] [--app-version X.Y]
                 [--exit-code] [--yes] [--locale xx]
                                               screenshots, app previews and creative assets
@@ -120,9 +123,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if o.json {
-		jsonOK := cmd == "status" || cmd == "diff" || (cmd == "media" && len(o.args) == 1 && o.args[0] == "diff")
+		jsonOK := cmd == "status" || cmd == "diff" || cmd == "check" || (cmd == "media" && len(o.args) == 1 && o.args[0] == "diff")
 		if !jsonOK {
-			fmt.Fprintln(stderr, "appbird: --json works with status, diff and media diff")
+			fmt.Fprintln(stderr, "appbird: --json works with status, diff, check and media diff")
 			return 2
 		}
 		a.json = true
@@ -144,6 +147,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		code, err = a.cmdDiffPush(o, true)
 	case "pull":
 		code, err = a.cmdPull(o)
+	case "check":
+		code, err = a.cmdCheck(o)
 	case "media":
 		code, err = a.cmdMedia(o)
 	case "create-version":

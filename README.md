@@ -216,15 +216,54 @@ pull request. Don't run `appbird push`.
 | `appbird pull [--locale xx]` | Overwrite the repo's files with App Store Connect's text. Review with `git diff`. |
 | `appbird media validate\|diff\|push\|pull` | The same for screenshots, app previews and creative assets. See [Media](#media). |
 | `appbird create-version <1.2> [--yes]` | Create the next App Store version, so you can push to it. Asks first. |
+| `appbird check [--json]` | Is the version ready to submit? Lists what's missing or invalid. Read-only. Exits 1 when it isn't ready. See [Ready to submit?](#ready-to-submit). |
 | `appbird version` | Print the version. |
 
-`diff`, `push`, `pull` and `media` take `--app-version 1.2` to pick a version. By default Appbird uses the version you're preparing, or the live one if there isn't one. `diff`, `push` and `pull` also take `--build 45` to pick a TestFlight build. See [TestFlight](#testflight).
+`diff`, `push`, `pull`, `check` and `media` take `--app-version 1.2` to pick a version. By default Appbird uses the version you're preparing, or the live one if there isn't one. `diff`, `push` and `pull` also take `--build 45` to pick a TestFlight build. See [TestFlight](#testflight).
 
 **What can change when.** Apple only accepts most edits while a version is being prepared (or after it was rejected). With only a live version, `push` writes the promotional text, subscription copy, the EULA and TestFlight text, and lists everything else as waiting. Run `appbird create-version 1.2` (Apple copies the live version's text into it) and push again.
 
 **If a push stops partway.** Appbird writes one step at a time and stops at the first one that fails. It then lists the steps it wrote and the ones it didn't. Every run works from App Store Connect's current state, so `appbird diff` shows what's left and `appbird push` again finishes the job. Appbird never sends a create twice on its own, so a dropped connection can't make a duplicate; if the failed step was a create, it tells you it may or may not have gone through.
 
-**For scripts.** `status --json`, `diff --json` and `media diff --json` print JSON instead of text: the app, the chosen version, the `testflight_build` (or `null`), each `steps[]` entry with its `changes[]` (`field`, `old`, `new`), the `waiting[]` changes with a `reason`, and `notes[]`. Warnings go to stderr. These field names won't change within a major version.
+**For scripts.** `status --json`, `diff --json` and `media diff --json` print JSON instead of text: the app, the chosen version, the `testflight_build` (or `null`), each `steps[]` entry with its `changes[]` (`field`, `old`, `new`), the `waiting[]` changes with a `reason`, and `notes[]`. Warnings go to stderr. `check --json` prints `ready`, `first_submission`, `pending_changes`, `problems[]` and `warnings[]` (each a `field` and a `message`), and `not_checked[]`. These field names won't change within a major version.
+
+## Ready to submit?
+
+`appbird check` goes through what App Review needs for the version you're preparing and lists what's missing. It never submits anything; when it says the version is ready, you submit in App Store Connect.
+
+```
+$ appbird check
+Journal IOS 1.0 (PREPARE_FOR_SUBMISSION), first submission
+
+Problems (3):
+  ✗ build: no build selected for this version. Pick one in App Store Connect on the version's page.
+  ✗ en-US/privacy_url: missing: Apple requires a privacy policy URL.
+  ✗ review contact: missing phone. Add it under App Review Information in App Store Connect.
+
+Warnings (1):
+  ! screenshots/en-US: no iPad screenshots. Apple requires a 13-inch (APP_IPAD_PRO_3GEN_129) or 12.9-inch (APP_IPAD_PRO_129) set if the build runs on iPad.
+
+Check these in App Store Connect yourself:
+  - App Privacy: the data collection answers and their publishing (Apple's API doesn't expose them)
+  - Availability: the countries and regions the app is sold in
+  - Trader status, if the app is distributed in the EU (Digital Services Act)
+
+Not ready to submit: 3 problem(s).
+```
+
+It counts the repo as pushed: a field the repo manages is checked with the repo's value, everything else with App Store Connect's. If the repo has changes App Store Connect doesn't, it says so and tells you to `appbird push` first.
+
+What it checks:
+
+- **The version** is one you can still submit (not already in review or live), and it has a **build** selected that has finished processing, hasn't expired, and has an export compliance answer.
+- **Every language** has a name and privacy policy URL (App Info), and a description, keywords and support URL (the version). Updates also need release notes; a first version can't have them, so a `release_notes.txt` there only warns. The app's primary language needs a listing. Character limits and URLs are checked as `validate` does.
+- **Screenshots** in the primary language (other languages fall back to them): on iOS a 6.9-inch or 6.5-inch iPhone set and a 13-inch iPad set, since Apple scales the smaller sizes from those. Apple's API doesn't say whether a build runs on iPad, so a missing iPad set only warns. Mac, Apple TV and Vision Pro need their one size. Screenshots that failed to process are problems in any language.
+- **App Info settings:** a primary category, the content rights declaration, and an answered age rating questionnaire.
+- **Copyright**, and the **App Review contact** name, phone and email (whether they're set, never their values), plus the demo account if you marked one required.
+- **A price** on a first submission. Appbird reads the price schedule but never changes it.
+- **In-app purchases and subscriptions** that are missing metadata, or ready but not yet attached to a version, as warnings.
+
+A first submission is one where the platform has never had a version on the App Store.
 
 ## Files
 
