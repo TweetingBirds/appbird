@@ -90,19 +90,39 @@ func TestCheckScreenshotSizesAndFailedUploads(t *testing.T) {
 	e := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
 	makeReady(e)
 	e.fake.children["/v1/appStoreVersionLocalizations/vl1/appScreenshotSets"] = nil
-	addShots(e, "ss2", "APP_IPHONE_61", "COMPLETE", "FAILED")
+	addShots(e, "ss2", "APP_IPHONE_55", "COMPLETE", "FAILED")
 	addShots(e, "ss3", "APP_IPAD_PRO_3GEN_129", "COMPLETE")
 	code, out, _ := e.run("check")
 	must(t, code == 1, "exit %d:\n%s", code, out)
-	contains(t, out, "✗ screenshots/en-US/APP_IPHONE_61: screenshot 2 failed to process")
-	contains(t, out, "✗ screenshots/en-US: iPhone screenshots need a 6.9-inch (APP_IPHONE_67) or 6.5-inch (APP_IPHONE_65) set")
-	must(t, !strings.Contains(out, "iPad screenshots need"), "13-inch iPad set is there:\n%s", out)
+	contains(t, out, "✗ screenshots/en-US/APP_IPHONE_55: screenshot 2 failed to process")
+	contains(t, out, "! screenshots/en-US: no 6.9-inch (APP_IPHONE_67) or 6.5-inch (APP_IPHONE_65) or 6.3-inch (APP_IPHONE_61) set for iPhone")
+	must(t, !strings.Contains(out, "set for iPad"), "13-inch iPad set is there:\n%s", out)
+	must(t, !strings.Contains(out, "✗ screenshots/en-US:"), "a missing preferred size only warns:\n%s", out)
 
 	// Screenshots in the repo count once pushed, with a reminder to push them.
 	e.write("screenshots/en-US/APP_IPHONE_65/1.png", "png")
 	_, out, _ = e.run("check")
-	must(t, !strings.Contains(out, "iPhone screenshots need"), "6.5-inch set in the repo:\n%s", out)
+	must(t, !strings.Contains(out, "set for iPhone"), "6.5-inch set in the repo:\n%s", out)
 	contains(t, out, "! screenshots/en-US: the repo's screenshots differ")
+
+	// Without the failed upload, a 5.5-inch set alone passes with the warning.
+	e3 := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	makeReady(e3)
+	e3.fake.children["/v1/appStoreVersionLocalizations/vl1/appScreenshotSets"] = nil
+	addShots(e3, "ss6", "APP_IPHONE_55", "COMPLETE")
+	addShots(e3, "ss7", "APP_IPAD_PRO_3GEN_129", "COMPLETE")
+	code, out, _ = e3.run("check")
+	must(t, code == 0, "exit %d:\n%s", code, out)
+	contains(t, out, "set for iPhone. App Store Connect prefers one")
+
+	// A 6.3-inch set alone is enough: App Store Connect scales it down.
+	e2 := setup(t, "PREPARE_FOR_SUBMISSION", "PREPARE_FOR_SUBMISSION")
+	makeReady(e2)
+	e2.fake.children["/v1/appStoreVersionLocalizations/vl1/appScreenshotSets"] = nil
+	addShots(e2, "ss4", "APP_IPHONE_61", "COMPLETE")
+	addShots(e2, "ss5", "APP_IPAD_PRO_3GEN_129", "COMPLETE")
+	code, out, _ = e2.run("check")
+	must(t, code == 0 && !strings.Contains(out, "set for iPhone"), "6.3-inch set: exit %d\n%s", code, out)
 }
 
 func TestCheckAnUpdateNeedsReleaseNotes(t *testing.T) {
