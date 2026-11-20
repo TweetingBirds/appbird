@@ -1,4 +1,9 @@
-# Appbird
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/appbird-logo-dark.svg">
+    <img src="assets/appbird-logo-light.svg" alt="Appbird" height="72">
+  </picture>
+</h1>
 
 Keep your App Store listing in your repo. Appbird compares plain text files (and, if you want, your screenshots and artwork) with App Store Connect and TestFlight, shows you the difference, and writes it through the App Store Connect API when you say so.
 
