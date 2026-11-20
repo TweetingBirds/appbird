@@ -1,4 +1,4 @@
-// Appbird keeps an app's App Store Connect listing in sync with files in its repo.
+// App Bird keeps an app's App Store Connect listing in sync with files in its repo.
 //
 // It edits listing text, App Info settings and media, and creates a version when asked. It never
 // submits anything for review, releases a version, deletes a localization, or touches prices

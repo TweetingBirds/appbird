@@ -1,11 +1,11 @@
 <h1>
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/appbird-logo-dark.svg">
-    <img src="assets/appbird-logo-light.svg" alt="Appbird" height="72">
+    <img src="assets/appbird-logo-light.svg" alt="App Bird" height="72">
   </picture>
 </h1>
 
-Keep your App Store listing in your repo. Appbird compares plain text files (and, if you want, your screenshots and artwork) with App Store Connect and TestFlight, shows you the difference, and writes it through the App Store Connect API when you say so.
+Keep your App Store listing in your repo. App Bird compares plain text files (and, if you want, your screenshots and artwork) with App Store Connect and TestFlight, shows you the difference, and writes it through the App Store Connect API when you say so.
 
 ```
 $ appbird diff
@@ -25,7 +25,7 @@ Done: 2 change(s) written. Nothing was submitted for review.
 ```
 
 - **One binary, no dependencies.** A single static executable for macOS (Apple silicon and Intel), Linux and Windows. No Ruby, no gems, no Python, no OpenSSL.
-- **Safe by default.** `diff` only reads. `push` shows the diff and asks first. Appbird never submits anything for review (App Review or TestFlight's Beta App Review), never releases a version, never adds or removes testers, never deletes a localization, and never touches prices, availability, or your App Review contact details.
+- **Safe by default.** `diff` only reads. `push` shows the diff and asks first. App Bird never submits anything for review (App Review or TestFlight's Beta App Review), never releases a version, never adds or removes testers, never deletes a localization, and never touches prices, availability, or your App Review contact details.
 - **fastlane-compatible layout.** The text files use fastlane deliver's names (`metadata/en-US/description.txt`), so you can move between the two.
 - **Works for any app.** One small `appbird.json` per app repo, and one per platform if it ships on iOS, macOS, tvOS or visionOS.
 - **Easy to hand to an AI agent.** Copy-paste prompts below [set it up for you](#set-it-up-with-an-ai-agent).
@@ -71,7 +71,7 @@ From then on, edit the files, open a pull request, run `appbird diff`, and `appb
 
 ## Apps on more than one platform
 
-One config file manages one platform's App Store versions. Appbird asks App Store Connect only for versions of the `platform` it names, so `status`, `diff`, `push`, `pull`, `media` and `--app-version` all see that platform alone. The `--platform` flag only matters to `appbird init`. Every other command reads the platform from the config.
+One config file manages one platform's App Store versions. App Bird asks App Store Connect only for versions of the `platform` it names, so `status`, `diff`, `push`, `pull`, `media` and `--app-version` all see that platform alone. The `--platform` flag only matters to `appbird init`. Every other command reads the platform from the config.
 
 Apple Watch apps and iMessage apps aren't platforms of their own here. They're part of the iOS version, so they use `IOS`, and their screenshots go in the `APP_WATCH_…` and `IMESSAGE_APP_…` folders next to the iPhone and iPad ones.
 
@@ -113,7 +113,7 @@ appbird media diff -c appbird.macos.json --app-version 2.0
 
 Keep each shared file in **one** metadata folder only. `pull` writes every file into whichever folder you pulled into, so after pulling the second platform, delete its copies of the shared files (`name.txt`, `subtitle.txt`, the privacy URLs, `eula.txt`, `subscriptions/`, `subscription_groups/`, and every file in `testflight/<locale>/` except `what_to_test.txt`). A missing file isn't managed, so the other config keeps owning them. If both folders keep a shared file and the two copies differ, each `push` overwrites the other's text.
 
-Things Appbird doesn't check for you:
+Things App Bird doesn't check for you:
 
 - **The platform value in a config you wrote by hand.** `appbird init` refuses an unknown platform, but a typo such as `MACOS` typed into a config later isn't caught offline. `status` then lists no versions, and `diff` reports that the app has no App Store version yet.
 - **Display types against the platform.** `media validate` accepts every display type Apple has, whatever the platform. Use the ones for that platform: `APP_DESKTOP` and `DESKTOP` for macOS, `APP_APPLE_TV` and `APPLE_TV` for tvOS, `APP_APPLE_VISION_PRO` and `APPLE_VISION_PRO` for visionOS, and the iPhone, iPad, Watch and iMessage ones for iOS.
@@ -126,7 +126,7 @@ In CI, run each step once per config (`appbird diff`, then `appbird diff -c appb
 2. Download the `.p8` file. Apple lets you download it **once**. Keep it in a password manager or `~/.appstoreconnect/private_keys/`, never in a repo.
 3. Note the **Key ID** and the **Issuer ID** shown on that page.
 
-Appbird reads:
+App Bird reads:
 
 | Variable | Value |
 |---|---|
@@ -135,7 +135,7 @@ Appbird reads:
 | `ASC_PRIVATE_KEY_PATH` | path to the `.p8` file, **or** |
 | `ASC_PRIVATE_KEY` | the file's contents (for CI secrets; `\n` escapes are fine) |
 
-Without either key variable, Appbird looks for `AuthKey_<KEY_ID>.p8` in `./private_keys`, `~/private_keys`, `~/.private_keys` and `~/.appstoreconnect/private_keys`, the same places Apple's `altool` uses.
+Without either key variable, App Bird looks for `AuthKey_<KEY_ID>.p8` in `./private_keys`, `~/private_keys`, `~/.private_keys` and `~/.appstoreconnect/private_keys`, the same places Apple's `altool` uses.
 
 ## Set it up with an AI agent
 
@@ -143,10 +143,10 @@ If you use an AI coding agent (Claude Code, Codex, Cursor, Copilot and the like)
 
 The agent can't create the API key for you. Do the three [API key](#api-key) steps yourself first, and export the variables in the shell the agent runs in (or put the `.p8` file in `~/.appstoreconnect/private_keys/`).
 
-**Install Appbird and start tracking this app's metadata**
+**Install App Bird and start tracking this app's metadata**
 
 ```text
-Set up Appbird (https://github.com/TweetingBirds/appbird) in this repo so the App Store
+Set up App Bird (https://github.com/TweetingBirds/appbird) in this repo so the App Store
 listing lives in files here. Read its README first and follow it.
 
 1. Install the binary if `appbird version` doesn't work:
@@ -171,10 +171,10 @@ Don't run `appbird push` or `appbird media push`. I'll do that myself.
 **Add the GitHub Actions workflow**
 
 ```text
-Add Appbird's CI workflow to this repo. Copy
+Add App Bird's CI workflow to this repo. Copy
 https://raw.githubusercontent.com/TweetingBirds/appbird/main/examples/app-store-metadata.yml
 to .github/workflows/app-store-metadata.yml. Set APPBIRD_VERSION in it to the latest
-release from https://github.com/TweetingBirds/appbird/releases. If the repo's Appbird
+release from https://github.com/TweetingBirds/appbird/releases. If the repo's App Bird
 config (appbird.json, or appbird.<platform>.json for a non-iOS app) uses a metadata_dir
 other than "metadata", update the pull_request paths filter to match. If the repo has more
 than one config, run each appbird step once per config with -c.
@@ -186,7 +186,7 @@ or the key file yourself. Open a pull request with the change.
 **Move from fastlane deliver**
 
 ```text
-This repo uses fastlane deliver for App Store metadata. Set up Appbird
+This repo uses fastlane deliver for App Store metadata. Set up App Bird
 (https://github.com/TweetingBirds/appbird) to read the same text files: install it as
 its README says, run `appbird init <bundle id> --platform <platform>` with the app's
 bundle ID, and set "metadata_dir" in the config it wrote to the existing fastlane metadata
@@ -194,13 +194,13 @@ folder (usually fastlane/metadata). Run `appbird validate` and tell me what it r
 fastlane-only files (such as primary_category.txt or a default/ folder) may show up there.
 Then run `appbird diff` and show me what differs from App Store Connect.
 Don't move or delete any fastlane files, and don't push. Screenshots use a different
-folder layout in Appbird (see the Media section of its README), so leave them for now.
+folder layout in App Bird (see the Media section of its README), so leave them for now.
 ```
 
 **Edit the listing**
 
 ```text
-Update this app's App Store listing in metadata/ (Appbird, see appbird.json):
+Update this app's App Store listing in metadata/ (App Bird, see appbird.json):
 <what you want: new release notes for 1.3, a German localization, sharper keywords, ...>
 Follow the file rules in https://github.com/TweetingBirds/appbird#files: one field per
 file, and respect the character limits (name and subtitle 30, keywords 100, promotional
@@ -224,11 +224,11 @@ pull request. Don't run `appbird push`.
 | `appbird check [--json]` | Is the version ready to submit? Lists what's missing or invalid. Read-only. Exits 1 when it isn't ready. See [Ready to submit?](#ready-to-submit). |
 | `appbird version` | Print the version. |
 
-`diff`, `push`, `pull`, `check` and `media` take `--app-version 1.2` to pick a version. By default Appbird uses the version you're preparing, or the live one if there isn't one. `diff`, `push` and `pull` also take `--build 45` to pick a TestFlight build. See [TestFlight](#testflight).
+`diff`, `push`, `pull`, `check` and `media` take `--app-version 1.2` to pick a version. By default App Bird uses the version you're preparing, or the live one if there isn't one. `diff`, `push` and `pull` also take `--build 45` to pick a TestFlight build. See [TestFlight](#testflight).
 
 **What can change when.** Apple only accepts most edits while a version is being prepared (or after it was rejected). With only a live version, `push` writes the promotional text, subscription copy, the EULA and TestFlight text, and lists everything else as waiting. Run `appbird create-version 1.2` (Apple copies the live version's text into it) and push again.
 
-**If a push stops partway.** Appbird writes one step at a time and stops at the first one that fails. It then lists the steps it wrote and the ones it didn't. Every run works from App Store Connect's current state, so `appbird diff` shows what's left and `appbird push` again finishes the job. Appbird never sends a create twice on its own, so a dropped connection can't make a duplicate; if the failed step was a create, it tells you it may or may not have gone through.
+**If a push stops partway.** App Bird writes one step at a time and stops at the first one that fails. It then lists the steps it wrote and the ones it didn't. Every run works from App Store Connect's current state, so `appbird diff` shows what's left and `appbird push` again finishes the job. App Bird never sends a create twice on its own, so a dropped connection can't make a duplicate; if the failed step was a create, it tells you it may or may not have gone through.
 
 **For scripts.** `status --json`, `diff --json` and `media diff --json` print JSON instead of text: the app, the chosen version, the `testflight_build` (or `null`), each `steps[]` entry with its `changes[]` (`field`, `old`, `new`), the `waiting[]` changes with a `reason`, and `notes[]`. Warnings go to stderr. `check --json` prints `ready`, `first_submission`, `pending_changes`, `problems[]` and `warnings[]` (each a `field` and a `message`), and `not_checked[]`. These field names won't change within a major version.
 
@@ -265,7 +265,7 @@ What it checks:
 - **Screenshots** in the primary language (other languages fall back to them): on iOS, App Store Connect prefers a 6.9-inch, 6.5-inch or 6.3-inch iPhone set and a 13-inch iPad set, since it scales the smaller sizes from those, so a missing preferred size is a warning. Apple's API doesn't say whether a build runs on iPad, so a missing iPad set only warns. Mac, Apple TV and Vision Pro need their one size. Screenshots that failed to process are problems in any language.
 - **App Info settings:** a primary category, the content rights declaration, and an answered age rating questionnaire.
 - **Copyright**, and the **App Review contact** name, phone and email (whether they're set, never their values), plus the demo account if you marked one required.
-- **A price** on a first submission. Appbird reads the price schedule but never changes it.
+- **A price** on a first submission. App Bird reads the price schedule but never changes it.
 - **In-app purchases and subscriptions** that are missing metadata, or ready but not yet attached to a version, as warnings.
 
 A first submission is one where the platform has never had a version on the App Store.
@@ -321,14 +321,14 @@ metadata/
 
 Rules:
 
-- **A missing file isn't managed.** Appbird leaves that field alone in App Store Connect.
+- **A missing file isn't managed.** App Bird leaves that field alone in App Store Connect.
 - **An empty file clears the field** (for fields Apple lets you clear, such as the marketing URL).
 - **A locale folder that App Store Connect doesn't have yet is added** when you push. A new locale needs at least `name.txt`.
-- **Locales in App Store Connect but not in the repo are left alone.** Appbird never deletes one.
+- **Locales in App Store Connect but not in the repo are left alone.** App Bird never deletes one.
 - Trailing whitespace and the final newline are ignored, so editors can't create false diffs.
 - Folder names are App Store Connect's listing locales: `en-US`, `de-DE`, `fr-FR`, `it`, `ja`, `pt-BR`, `es-ES`, `es-MX` (Latin America), `zh-Hant`, and so on.
 - Review contact details (name, phone, email) and demo account credentials stay in App Store Connect on purpose, so they never land in a repo.
-- Subscriptions and in-app purchases must already exist in App Store Connect. Appbird keeps their text in sync but doesn't create products or set prices.
+- Subscriptions and in-app purchases must already exist in App Store Connect. App Bird keeps their text in sync but doesn't create products or set prices.
 
 ### app_info.json
 
@@ -349,7 +349,7 @@ The App Info settings that aren't per-locale text live in one JSON file. Every k
 ```
 
 - **Categories** take App Store Connect's category IDs (`PRODUCTIVITY`, `GAMES_PUZZLE`, …). `null` clears a secondary category. There are also `primary_subcategory_two`, `secondary_subcategory_one` and `secondary_subcategory_two` for games and stickers.
-- **`age_rating`** holds Apple's age rating questionnaire, using the attribute names and values of the API's `ageRatingDeclarations`. Appbird sends what you write as is, so questions Apple adds later work without an Appbird update. Only the attributes you list are compared. `appbird pull` writes every attribute Apple returns, which is the easiest way to start.
+- **`age_rating`** holds Apple's age rating questionnaire, using the attribute names and values of the API's `ageRatingDeclarations`. App Bird sends what you write as is, so questions Apple adds later work without an App Bird update. Only the attributes you list are compared. `appbird pull` writes every attribute Apple returns, which is the easiest way to start.
 - **`content_rights`** is `DOES_NOT_USE_THIRD_PARTY_CONTENT` or `USES_THIRD_PARTY_CONTENT`.
 
 Categories and the age rating change only while a version is being prepared. Content rights can change at any time.
@@ -358,12 +358,12 @@ Categories and the age rating change only while a version is being prepared. Con
 
 `metadata/testflight/<locale>/` holds what testers see in TestFlight. A text `push` writes it along with the rest of the listing, and `diff` shows it. TestFlight text can change at any time, so it doesn't wait for an editable App Store version.
 
-- **`what_to_test.txt`** is the "What to Test" note. It belongs to one build, so Appbird writes it to the **newest build** on the config's platform (the most recently uploaded one that hasn't expired). `diff` names the build, for example `TestFlight build 1.3 (52)`. `--app-version 1.3` picks the newest build of version 1.3 (it picks the App Store version too, so that version has to exist in App Store Connect), and `--build 52` picks build 52 of any version.
+- **`what_to_test.txt`** is the "What to Test" note. It belongs to one build, so App Bird writes it to the **newest build** on the config's platform (the most recently uploaded one that hasn't expired). `diff` names the build, for example `TestFlight build 1.3 (52)`. `--app-version 1.3` picks the newest build of version 1.3 (it picks the App Store version too, so that version has to exist in App Store Connect), and `--build 52` picks build 52 of any version.
 - **`description.txt`, `feedback_email.txt`, `marketing_url.txt` and `privacy_url.txt`** are the app's TestFlight test information (the beta app description, the address tester feedback goes to, and the links). They belong to the app, not to a build, so every build and platform shares them.
 
 A typical release: upload the build, update `what_to_test.txt` in a pull request, then `appbird push` once the build shows up in App Store Connect. If the new build isn't there yet, `diff` still names the previous one, so check the build number before you push. Each new build starts with no notes, so the first `push` after an upload writes them to it. When there's no build at all, `diff` lists the notes as waiting.
 
-`pull` writes the newest build's notes and the test information (empty URLs are skipped). Beta App Review contact details and test groups stay in App Store Connect, and Appbird never submits a build to Beta App Review or adds it to a group.
+`pull` writes the newest build's notes and the test information (empty URLs are skipped). Beta App Review contact details and test groups stay in App Store Connect, and App Bird never submits a build to Beta App Review or adds it to a group.
 
 ## Media
 
@@ -391,9 +391,9 @@ metadata/
 
 How syncing works:
 
-- **Screenshots and previews** are matched by MD5 checksum (Apple keeps one per file). An unchanged file is never uploaded again, even if you rename it. When a set differs, Appbird uploads the new files, removes the ones you deleted, and puts the set in your file order. A display type folder you don't have is left alone. Apple only accepts these on a version you're preparing.
-- **Creative assets** go into the app's Asset Library once (named `appbird-<md5>`) and are placed on each locale's product page. A changed file gets a new placement, and the old placement is removed. Apple reviews creative assets on their own. Appbird places them but doesn't submit them, so submit them from App Store Connect › Asset Library.
-- Folder names are Apple's API values (`APP_IPHONE_67` is the 6.9" and 6.7" iPhone, `APP_IPAD_PRO_3GEN_129` the 13" iPad). iPhone Duo (`APP_IPHONE_DUO`, `IPHONE_DUO`) isn't in Apple's published API reference yet, but the live API is reported to accept it, so Appbird lets you try it with a warning.
+- **Screenshots and previews** are matched by MD5 checksum (Apple keeps one per file). An unchanged file is never uploaded again, even if you rename it. When a set differs, App Bird uploads the new files, removes the ones you deleted, and puts the set in your file order. A display type folder you don't have is left alone. Apple only accepts these on a version you're preparing.
+- **Creative assets** go into the app's Asset Library once (named `appbird-<md5>`) and are placed on each locale's product page. A changed file gets a new placement, and the old placement is removed. Apple reviews creative assets on their own. App Bird places them but doesn't submit them, so submit them from App Store Connect › Asset Library.
+- Folder names are Apple's API values (`APP_IPHONE_67` is the 6.9" and 6.7" iPhone, `APP_IPAD_PRO_3GEN_129` the 13" iPad). iPhone Duo (`APP_IPHONE_DUO`, `IPHONE_DUO`) isn't in Apple's published API reference yet, but the live API is reported to accept it, so App Bird lets you try it with a warning.
 - `appbird media diff` shows exactly what would be uploaded and removed. Run it before every `media push`.
 - **`appbird media pull`** downloads the version's screenshots and previews into these folders, named `01-…`, `02-…` in App Store Connect's order. A set that already matches is left alone; one that differs is replaced. Apple re-encodes everything it stores, so these aren't your original files: pull records which upload each download stands for in `.appbird-sources.json` in the set's folder, so `media diff` right after a pull is clean. Commit that file with the images. Edit a pulled file and it counts as a new upload. Creative assets can't be pulled yet.
 
