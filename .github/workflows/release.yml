@@ -1,7 +1,7 @@
 name: Release
 
 # Push a tag like v0.1.0 to build the binaries and publish a GitHub release:
-#   git tag -a v0.1.0 -m "Appbird 0.1.0" && git push origin v0.1.0
+#   git tag -a v0.1.0 -m "App Bird 0.1.0" && git push origin v0.1.0
 
 on:
   push:
@@ -42,4 +42,4 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --title "Appbird ${GITHUB_REF_NAME#v}" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "App Bird ${GITHUB_REF_NAME#v}" --generate-notes

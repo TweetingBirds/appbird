@@ -81,7 +81,7 @@ func fetchCheckExtras(c *Client, r *Remote) (*checkExtras, error) {
 		return nil, err
 	}
 	x.Screenshots = rm.ScreenshotSets
-	// Read only. Appbird never writes prices.
+	// Read only. App Bird never writes prices.
 	x.PriceSchedule, x.PriceErr = c.GetOne("/v1/apps/" + r.App.ID + "/appPriceSchedule")
 	return x, nil
 }
@@ -158,7 +158,7 @@ func checkReadiness(cfg Config, m *LocalMetadata, media *LocalMedia, r *Remote, 
 		case x.PriceErr != nil:
 			rd.warn("price", "couldn't read the price schedule: %v", x.PriceErr)
 		case x.PriceSchedule == nil:
-			rd.problem("price", "no price set. Choose one (Free counts) in App Store Connect › Pricing and Availability. Appbird never sets prices.")
+			rd.problem("price", "no price set. Choose one (Free counts) in App Store Connect › Pricing and Availability. App Bird never sets prices.")
 		}
 		rd.NotChecked = append(rd.NotChecked,
 			"App Privacy: the data collection answers and their publishing (Apple's API doesn't expose them)",
@@ -487,7 +487,7 @@ func printReadiness(w io.Writer, rd *readiness, r *Remote, x *checkExtras) {
 	case rd.Pending > 0:
 		fmt.Fprintf(w, "Ready once the repo is pushed: run `appbird push` for %d change(s), then submit in App Store Connect.\n", rd.Pending)
 	default:
-		fmt.Fprintln(w, "Ready to submit in App Store Connect. Appbird never submits for you.")
+		fmt.Fprintln(w, "Ready to submit in App Store Connect. App Bird never submits for you.")
 	}
 }
 
