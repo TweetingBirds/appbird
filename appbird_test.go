@@ -833,7 +833,7 @@ func TestVersionOwl(t *testing.T) {
 	}
 	contains(t, out.String(), "App Bird")
 	contains(t, out.String(), "appbird "+version)
-	contains(t, out.String(), "( () V () )")
+	contains(t, out.String(), "'--'V'--'")
 	if strings.Contains(out.String(), "\x1b[") {
 		t.Errorf("version printed color codes to a non-terminal:\n%q", out.String())
 	}

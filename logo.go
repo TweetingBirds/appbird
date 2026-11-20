@@ -12,8 +12,9 @@ import (
 var owlArt = []string{
 	`  /\_________/\ `,
 	` |  .--. .--.  |`,
-	` | ( () V () ) |`,
-	` |  '--' '--'  |`,
+	` | ( ()   () ) |`,
+	` |  '--'V'--'  |`,
+	` |             |`,
 	` |    v   v    |`,
 	`  \___________/ `,
 }
@@ -21,8 +22,9 @@ var owlArt = []string{
 var owlMask = []string{
 	`  bbbbbbbbbbbbb `,
 	` b  ffff ffff  b`,
-	` b f ee y ee f b`,
-	` b  ffff ffff  b`,
+	` b f ee   ee f b`,
+	` b  ffffyffff  b`,
+	` b             b`,
 	` b    d   d    b`,
 	`  bbbbbbbbbbbbb `,
 }
@@ -40,7 +42,7 @@ const ansiReset = "\x1b[0m"
 
 // printOwl writes the owl with App Bird, the version and the tagline beside it.
 func printOwl(w io.Writer, color bool) {
-	text := []string{"", "App Bird", "appbird " + version, "Keep your App Store listing in your repo.", "", ""}
+	text := []string{"", "App Bird", "appbird " + version, "Keep your App Store listing in your repo.", "", "", ""}
 	if color {
 		text[1] = owlColors['b'] + text[1] + ansiReset
 		text[3] = "\x1b[2m" + text[3] + ansiReset
