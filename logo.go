@@ -14,28 +14,24 @@ import (
 // owlPixels is the icon at 24x22 pixels, drawn two pixel rows per text line with half blocks.
 // . is transparent; the other letters are keys of owlPalette.
 var owlPixels = []string{
-	`bb....................bb`,
-	`bbb..................bbb`,
-	`bbbbb..............bbbbb`,
-	`bbbbbbbbbbbbbbbbbbbbbbbb`,
-	`bbbbbbbbbbbbbbbbbbbbbbbb`,
-	`bbbbffffffbbbbffffffbbbb`,
-	`bbbffffffffffffffffffbbb`,
-	`bbffwwwwwffffffwwwwwffbb`,
-	`bffwwwwwwwffffwwwwwwwffb`,
-	`bffwwppwwwffffwwppwwwffb`,
-	`bffwwpppwwffffwwpppwwffb`,
-	`bffwwpppwwyyyywwpppwwffb`,
-	`bbffwwwwwfyyyyfwwwwwffbb`,
-	`bbbffwwwfffyyfffwwwffbbb`,
-	`bbbbffffffbbbbffffffbbbb`,
-	`bbbbbbbbbbbbbbbbbbbbbbbb`,
-	`bbbbbbbbbbbbbbbbbbbbbbbb`,
-	`bbbbbbbbdbdbbdbdbbbbbbbb`,
-	`bbbbbbbbbdbbbbdbbbbbbbbb`,
-	`bbbbbbbbbbbbbbbbbbbbbbbb`,
-	`.bbbbbbbbbbbbbbbbbbbbbb.`,
-	`..bbbbbbbbbbbbbbbbbbbb..`,
+	`bb................bb`,
+	`bbb..............bbb`,
+	`bbbbb..........bbbbb`,
+	`bbbbbbbbbbbbbbbbbbbb`,
+	`bbbffffffbbffffffbbb`,
+	`bbffwwwwffffwwwwffbb`,
+	`bffwwwwwwffwwwwwwffb`,
+	`bffwwppwwffwwppwwffb`,
+	`bffwwppwwffwwppwwffb`,
+	`bffwwwwwyyyywwwwwffb`,
+	`bbffwwwwfyyfwwwwffbb`,
+	`bbbffffffbbffffffbbb`,
+	`bbbbbbbbbbbbbbbbbbbb`,
+	`bbbbbbbbbbbbbbbbbbbb`,
+	`bbbbbbdbdbbdbdbbbbbb`,
+	`bbbbbbbdbbbbdbbbbbbb`,
+	`.bbbbbbbbbbbbbbbbbb.`,
+	`..bbbbbbbbbbbbbbbb..`,
 }
 
 var owlPalette = map[byte][3]uint8{
@@ -117,7 +113,7 @@ func printOwl(w io.Writer, mode colorMode) {
 	var owl []string
 	var top int // owl line the text starts beside
 	if mode >= color256 {
-		owl, top = pixelOwl(mode), 4
+		owl, top = pixelOwl(mode), 3
 	} else {
 		owl, top = lineOwl(mode), 1
 	}
@@ -155,8 +151,10 @@ func lineOwl(mode colorMode) []string {
 	return lines
 }
 
-// pixelOwl draws owlPixels with upper half blocks: the foreground is the top pixel and the
-// background the bottom one.
+// pixelOwl draws owlPixels two pixel rows per text line. Many terminals add line spacing that a
+// block glyph doesn't cover but the cell's background does, so a cell whose two pixels match is a
+// space on that background, and a cell that mixes two colors is a lower half block over the top
+// pixel's color, which leaves any gap above the glyph the color of the pixel it belongs to.
 func pixelOwl(mode colorMode) []string {
 	var lines []string
 	for y := 0; y+1 < len(owlPixels); y += 2 {
@@ -165,14 +163,19 @@ func pixelOwl(mode colorMode) []string {
 			top, topOK := owlPalette[owlPixels[y][x]]
 			bot, botOK := owlPalette[owlPixels[y+1][x]]
 			switch {
+			case topOK && botOK && top == bot:
+				b.WriteString("\x1b[" + ansiColor(mode, 48, top) + "m ")
 			case topOK && botOK:
-				b.WriteString("\x1b[" + ansiColor(mode, 38, top) + ";" + ansiColor(mode, 48, bot) + "m\u2580")
+				b.WriteString("\x1b[" + ansiColor(mode, 38, bot) + ";" + ansiColor(mode, 48, top) + "m\u2584")
 			case topOK:
-				b.WriteString("\x1b[" + ansiColor(mode, 38, top) + "m\u2580")
+				// Reverse video: the top pixel fills the cell and the lower half block takes the
+				// terminal's own background, so the gap above it stays the pixel's color too.
+				b.WriteString("\x1b[7;" + ansiColor(mode, 38, top) + "m\u2584")
 			case botOK:
 				b.WriteString("\x1b[" + ansiColor(mode, 38, bot) + "m\u2584")
 			default:
 				b.WriteString(" ")
+				continue
 			}
 			b.WriteString(ansiReset)
 		}
