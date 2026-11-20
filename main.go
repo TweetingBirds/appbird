@@ -16,6 +16,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // version is set at build time with -ldflags "-X main.version=..."
@@ -44,6 +45,8 @@ Usage:
                                               screenshots, app previews and creative assets
                                               (pull: screenshots and previews only)
   appbird create-version <X.Y.Z> [--yes]      create the next App Store version to edit
+  appbird update [X.Y.Z] [--check]            install the latest release over this binary (checks
+                                              its checksum first; --check only says if one is out)
   appbird version [--line]                    print the version (--line: line owl instead of pixels;
                                               --version prints one plain line)
 
@@ -54,6 +57,7 @@ API key: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY_PATH or ASC_PRIVATE_KEY.
 type options struct {
 	config, appVersion, platform, build string
 	verbose, yes, exitCode, json, line  bool
+	check                               bool
 	locales, only                       multiFlag
 	args                                []string
 }
@@ -80,6 +84,7 @@ func parseOptions(name string, args []string, stderr io.Writer) (*options, error
 	fs.BoolVar(&o.exitCode, "exit-code", false, "")
 	fs.BoolVar(&o.json, "json", false, "")
 	fs.BoolVar(&o.line, "line", false, "")
+	fs.BoolVar(&o.check, "check", false, "")
 	fs.Var(&o.locales, "locale", "")
 	fs.Var(&o.only, "only", "")
 	// Allow flags before and after positional arguments.
@@ -132,6 +137,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		}
 		a.json = true
 	}
+	notice := func(io.Writer) {}
+	if wantUpdateNotice(cmd, o, stdout, stderr) {
+		notice = startUpdateCheck(updateCheckPath(), time.Now())
+	}
+	defer func() { notice(stderr) }()
 	var code int
 	switch cmd {
 	case "--version":
@@ -158,6 +168,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		code, err = a.cmdMedia(o)
 	case "create-version":
 		code, err = a.cmdCreateVersion(o)
+	case "update":
+		code, err = a.cmdUpdate(o)
 	default:
 		fmt.Fprintf(stderr, "appbird: unknown command %q\n\n%s", cmd, usage)
 		return 2
