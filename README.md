@@ -44,6 +44,18 @@ go install github.com/TweetingBirds/appbird@latest
 
 A binary downloaded with a browser on macOS is quarantined by Gatekeeper. `xattr -d com.apple.quarantine appbird` clears that. `curl` and `go install` don't set the flag.
 
+### Update
+
+```sh
+appbird update            # install the latest release over this binary
+appbird update --check    # only say whether a newer one is out
+appbird update 0.7.1      # install a specific release, for example to go back one
+```
+
+`update` downloads the release for your OS and CPU, checks it against the release's `checksums.txt`, makes sure the new binary runs, and only then replaces the old one. If App Bird lives somewhere you can't write, like `/usr/local/bin`, run `sudo appbird update`. A binary built with `go install` updates the same way it was installed.
+
+About once a day, a command run in a terminal ends with a one-line note when a newer release is out. It checks GitHub in the background while the command runs, and never in CI (when `CI` is set), with `--json`, or when output goes to a pipe or file. Set `APPBIRD_NO_UPDATE_CHECK=1` to turn it off.
+
 ## Set up an app
 
 ```sh
