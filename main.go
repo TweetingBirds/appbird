@@ -44,7 +44,7 @@ Usage:
                                               screenshots, app previews and creative assets
                                               (pull: screenshots and previews only)
   appbird create-version <X.Y.Z> [--yes]      create the next App Store version to edit
-  appbird version
+  appbird version                             print the version (--version prints one plain line)
 
 Every command takes -c <path to appbird.json> and -v (print each API request).
 API key: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY_PATH or ASC_PRIVATE_KEY.
@@ -132,8 +132,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	var code int
 	switch cmd {
-	case "version", "--version":
+	case "--version":
 		fmt.Fprintln(stdout, "appbird", version)
+		return 0
+	case "version", "hoot":
+		printOwl(stdout, useColor(stdout))
 		return 0
 	case "init":
 		code, err = a.cmdInit(o)

@@ -825,3 +825,29 @@ func TestStatusShowsTheNewestBuild(t *testing.T) {
 	must(t, code == 0, "exit %d: %s", code, stderr)
 	contains(t, out, "TestFlight: newest build 1.1 (45), VALID")
 }
+
+func TestVersionOwl(t *testing.T) {
+	var out, errb bytes.Buffer
+	if code := run([]string{"version"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("version exited %d: %s", code, errb.String())
+	}
+	contains(t, out.String(), "App Bird")
+	contains(t, out.String(), "appbird "+version)
+	contains(t, out.String(), "( () V () )")
+	if strings.Contains(out.String(), "\x1b[") {
+		t.Errorf("version printed color codes to a non-terminal:\n%q", out.String())
+	}
+	out.Reset()
+	run([]string{"--version"}, strings.NewReader(""), &out, &errb)
+	if got := out.String(); got != "appbird "+version+"\n" {
+		t.Errorf("--version = %q, want one plain line", got)
+	}
+	out.Reset()
+	printOwl(&out, true)
+	contains(t, out.String(), "\x1b[1;38;2;47;128;237m")
+	for i := range owlArt {
+		if len(owlArt[i]) != len(owlMask[i]) {
+			t.Errorf("owl line %d: art and mask lengths differ", i)
+		}
+	}
+}
