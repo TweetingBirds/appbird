@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-Keep your App Store listing in your repo. App Bird compares plain text files (and, if you want, your screenshots and artwork) with App Store Connect and TestFlight, shows you the difference, and writes it through the App Store Connect API when you say so.
+App Store metadata, reviewed like code. App Bird compares plain text files (and, if you want, your screenshots and artwork) with App Store Connect and TestFlight, shows you the difference, and writes it through the App Store Connect API when you say so.
 
 ```
 $ appbird diff

@@ -105,7 +105,7 @@ func terminalColors(w io.Writer) colorMode {
 
 // printOwl writes the owl with App Bird, the version and the tagline beside it.
 func printOwl(w io.Writer, mode colorMode) {
-	name, ver, tag := "App Bird", "appbird "+version, "Keep your App Store listing in your repo."
+	name, ver, tag := "App Bird", "appbird "+version, "App Store metadata, reviewed like code."
 	if mode != noColor {
 		name = "\x1b[1;34m" + name + ansiReset
 		tag = "\x1b[2m" + tag + ansiReset
