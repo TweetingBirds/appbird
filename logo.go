@@ -65,7 +65,10 @@ var owlMask = []string{
 	`  bbbbbbbbbbbbb `,
 }
 
-// 16-color codes for the line owl, which only shows on terminals without 256 colors.
+// owlArtPixel maps owlMask keys to owlPalette keys, for terminals with 256 or 24-bit color.
+var owlArtPixel = map[byte]byte{'b': 'b', 'f': 'f', 'e': 'w', 'y': 'y', 'd': 'd'}
+
+// 16-color codes for the line owl.
 var owlArtColors = map[byte]string{
 	'b': "\x1b[1;34m", 'f': "\x1b[1;94m", 'e': "\x1b[1;97m", 'y': "\x1b[1;33m", 'd': "\x1b[34m",
 }
@@ -103,8 +106,9 @@ func terminalColors(w io.Writer) colorMode {
 	return color16
 }
 
-// printOwl writes the owl with App Bird, the version and the tagline beside it.
-func printOwl(w io.Writer, mode colorMode) {
+// printOwl writes the owl with App Bird, the version and the tagline beside it. With line set, or
+// on a terminal without 256 colors, it draws the line owl rather than the pixel owl.
+func printOwl(w io.Writer, mode colorMode, line bool) {
 	name, ver, tag := "App Bird", "appbird "+version, "App Store metadata, reviewed like code."
 	if mode != noColor {
 		name = "\x1b[1;34m" + name + ansiReset
@@ -112,7 +116,7 @@ func printOwl(w io.Writer, mode colorMode) {
 	}
 	var owl []string
 	var top int // owl line the text starts beside
-	if mode >= color256 {
+	if mode >= color256 && !line {
 		owl, top = pixelOwl(mode), 3
 	} else {
 		owl, top = lineOwl(mode), 1
@@ -139,7 +143,12 @@ func lineOwl(mode colorMode) []string {
 			for k < len(line) && owlMask[i][k] == owlMask[i][j] {
 				k++
 			}
-			if c, ok := owlArtColors[owlMask[i][j]]; ok {
+			key := owlMask[i][j]
+			if c, ok := owlArtColors[key]; ok {
+				if mode >= color256 {
+					// The logo's own colors, from the pixel owl's palette.
+					c = "\x1b[1;" + ansiColor(mode, 38, owlPalette[owlArtPixel[key]]) + "m"
+				}
 				b.WriteString(c + line[j:k] + ansiReset)
 			} else {
 				b.WriteString(line[j:k])

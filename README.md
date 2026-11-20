@@ -222,7 +222,7 @@ pull request. Don't run `appbird push`.
 | `appbird media validate\|diff\|push\|pull` | The same for screenshots, app previews and creative assets. See [Media](#media). |
 | `appbird create-version <1.2> [--yes]` | Create the next App Store version, so you can push to it. Asks first. |
 | `appbird check [--json]` | Is the version ready to submit? Lists what's missing or invalid. Read-only. Exits 1 when it isn't ready. See [Ready to submit?](#ready-to-submit). |
-| `appbird version` | Print the version next to the App Bird owl (in pixels on terminals with 256 or 24-bit color). `--version` prints one plain line for scripts. |
+| `appbird version` | Print the version next to the App Bird owl (in pixels on terminals with 256 or 24-bit color). `--line`, or `APPBIRD_OWL=line` in your environment, shows the line owl instead. `--version` prints one plain line for scripts. |
 
 `diff`, `push`, `pull`, `check` and `media` take `--app-version 1.2` to pick a version. By default App Bird uses the version you're preparing, or the live one if there isn't one. `diff`, `push` and `pull` also take `--build 45` to pick a TestFlight build. See [TestFlight](#testflight).
 

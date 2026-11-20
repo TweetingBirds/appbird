@@ -44,7 +44,8 @@ Usage:
                                               screenshots, app previews and creative assets
                                               (pull: screenshots and previews only)
   appbird create-version <X.Y.Z> [--yes]      create the next App Store version to edit
-  appbird version                             print the version (--version prints one plain line)
+  appbird version [--line]                    print the version (--line: line owl instead of pixels;
+                                              --version prints one plain line)
 
 Every command takes -c <path to appbird.json> and -v (print each API request).
 API key: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY_PATH or ASC_PRIVATE_KEY.
@@ -52,7 +53,7 @@ API key: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_PRIVATE_KEY_PATH or ASC_PRIVATE_KEY.
 
 type options struct {
 	config, appVersion, platform, build string
-	verbose, yes, exitCode, json        bool
+	verbose, yes, exitCode, json, line  bool
 	locales, only                       multiFlag
 	args                                []string
 }
@@ -78,6 +79,7 @@ func parseOptions(name string, args []string, stderr io.Writer) (*options, error
 	fs.BoolVar(&o.yes, "yes", false, "")
 	fs.BoolVar(&o.exitCode, "exit-code", false, "")
 	fs.BoolVar(&o.json, "json", false, "")
+	fs.BoolVar(&o.line, "line", false, "")
 	fs.Var(&o.locales, "locale", "")
 	fs.Var(&o.only, "only", "")
 	// Allow flags before and after positional arguments.
@@ -136,7 +138,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "appbird", version)
 		return 0
 	case "version", "hoot":
-		printOwl(stdout, terminalColors(stdout))
+		printOwl(stdout, terminalColors(stdout), o.line || os.Getenv("APPBIRD_OWL") == "line")
 		return 0
 	case "init":
 		code, err = a.cmdInit(o)

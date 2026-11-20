@@ -844,11 +844,19 @@ func TestVersionOwl(t *testing.T) {
 	}
 	for _, mode := range []colorMode{color16, color256, color24bit} {
 		out.Reset()
-		printOwl(&out, mode)
+		printOwl(&out, mode, false)
 		contains(t, out.String(), "appbird "+version)
 		contains(t, out.String(), "\x1b[")
 	}
 	contains(t, out.String(), "38;2;47;128;237")
+	out.Reset()
+	if code := run([]string{"version", "--line"}, strings.NewReader(""), &out, &errb); code != 0 {
+		t.Fatalf("version --line exited %d: %s", code, errb.String())
+	}
+	contains(t, out.String(), "'--'V'--'")
+	out.Reset()
+	printOwl(&out, color24bit, true)
+	contains(t, out.String(), "\x1b[1;38;2;47;128;237m/\\")
 	for _, row := range owlPixels {
 		if len(row) != len(owlPixels[0]) {
 			t.Errorf("owl pixel rows differ in width: %q", row)
