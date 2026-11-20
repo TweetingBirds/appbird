@@ -842,9 +842,18 @@ func TestVersionOwl(t *testing.T) {
 	if got := out.String(); got != "appbird "+version+"\n" {
 		t.Errorf("--version = %q, want one plain line", got)
 	}
-	out.Reset()
-	printOwl(&out, true)
-	contains(t, out.String(), "\x1b[1;38;2;47;128;237m")
+	for _, mode := range []colorMode{color16, color256, color24bit} {
+		out.Reset()
+		printOwl(&out, mode)
+		contains(t, out.String(), "appbird "+version)
+		contains(t, out.String(), "\x1b[")
+	}
+	contains(t, out.String(), "38;2;47;128;237")
+	for _, row := range owlPixels {
+		if len(row) != len(owlPixels[0]) {
+			t.Errorf("owl pixel rows differ in width: %q", row)
+		}
+	}
 	for i := range owlArt {
 		if len(owlArt[i]) != len(owlMask[i]) {
 			t.Errorf("owl line %d: art and mask lengths differ", i)

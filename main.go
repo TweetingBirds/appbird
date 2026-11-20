@@ -136,7 +136,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "appbird", version)
 		return 0
 	case "version", "hoot":
-		printOwl(stdout, useColor(stdout))
+		printOwl(stdout, terminalColors(stdout))
 		return 0
 	case "init":
 		code, err = a.cmdInit(o)
