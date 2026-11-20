@@ -11,27 +11,31 @@ import (
 // 256 or 24-bit color get a pixel copy of the icon (assets/appbird-icon.svg); other terminals, pipes
 // and NO_COLOR get the line owl.
 
-// owlPixels is the icon at 20x18 pixels, drawn two pixel rows per text line with half blocks.
+// owlPixels is the icon at 24x22 pixels, drawn two pixel rows per text line with half blocks.
 // . is transparent; the other letters are keys of owlPalette.
 var owlPixels = []string{
-	`bb................bb`,
-	`bbb..............bbb`,
-	`bbbbb..........bbbbb`,
-	`bbbbbbbbbbbbbbbbbbbb`,
-	`bbbffffffbbffffffbbb`,
-	`bbffwwwwffffwwwwffbb`,
-	`bffwwwwwwffwwwwwwffb`,
-	`bffwwppwwffwwppwwffb`,
-	`bffwwppwwffwwppwwffb`,
-	`bffwwwwwyyyywwwwwffb`,
-	`bbffwwwwfyyfwwwwffbb`,
-	`bbbffffffbbffffffbbb`,
-	`bbbbbbbbbbbbbbbbbbbb`,
-	`bbbbbbbbbbbbbbbbbbbb`,
-	`bbbbbbdbdbbdbdbbbbbb`,
-	`bbbbbbbdbbbbdbbbbbbb`,
-	`.bbbbbbbbbbbbbbbbbb.`,
-	`..bbbbbbbbbbbbbbbb..`,
+	`bb....................bb`,
+	`bbb..................bbb`,
+	`bbbbb..............bbbbb`,
+	`bbbbbbbbbbbbbbbbbbbbbbbb`,
+	`bbbbbbbbbbbbbbbbbbbbbbbb`,
+	`bbbbffffffbbbbffffffbbbb`,
+	`bbbffffffffffffffffffbbb`,
+	`bbffwwwwwffffffwwwwwffbb`,
+	`bffwwwwwwwffffwwwwwwwffb`,
+	`bffwwppwwwffffwwppwwwffb`,
+	`bffwwpppwwffffwwpppwwffb`,
+	`bffwwpppwwyyyywwpppwwffb`,
+	`bbffwwwwwfyyyyfwwwwwffbb`,
+	`bbbffwwwfffyyfffwwwffbbb`,
+	`bbbbffffffbbbbffffffbbbb`,
+	`bbbbbbbbbbbbbbbbbbbbbbbb`,
+	`bbbbbbbbbbbbbbbbbbbbbbbb`,
+	`bbbbbbbbdbdbbdbdbbbbbbbb`,
+	`bbbbbbbbbdbbbbdbbbbbbbbb`,
+	`bbbbbbbbbbbbbbbbbbbbbbbb`,
+	`.bbbbbbbbbbbbbbbbbbbbbb.`,
+	`..bbbbbbbbbbbbbbbbbbbb..`,
 }
 
 var owlPalette = map[byte][3]uint8{
@@ -113,7 +117,7 @@ func printOwl(w io.Writer, mode colorMode) {
 	var owl []string
 	var top int // owl line the text starts beside
 	if mode >= color256 {
-		owl, top = pixelOwl(mode), 3
+		owl, top = pixelOwl(mode), 4
 	} else {
 		owl, top = lineOwl(mode), 1
 	}
