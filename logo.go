@@ -11,7 +11,7 @@ import (
 // 256 or 24-bit color get a pixel copy of the icon (assets/appbird-icon.svg); other terminals, pipes
 // and NO_COLOR get the line owl.
 
-// owlPixels is the icon at 20x18 pixels, drawn two pixel rows per text line with half blocks.
+// owlPixels is the icon at 24x22 pixels, drawn two pixel rows per text line with half blocks.
 // . is transparent; the other letters are keys of owlPalette.
 var owlPixels = []string{
 	`bb................bb`,
@@ -65,7 +65,10 @@ var owlMask = []string{
 	`  bbbbbbbbbbbbb `,
 }
 
-// 16-color codes for the line owl, which only shows on terminals without 256 colors.
+// owlArtPixel maps owlMask keys to owlPalette keys, for terminals with 256 or 24-bit color.
+var owlArtPixel = map[byte]byte{'b': 'b', 'f': 'f', 'e': 'w', 'y': 'y', 'd': 'd'}
+
+// 16-color codes for the line owl.
 var owlArtColors = map[byte]string{
 	'b': "\x1b[1;34m", 'f': "\x1b[1;94m", 'e': "\x1b[1;97m", 'y': "\x1b[1;33m", 'd': "\x1b[34m",
 }
@@ -103,8 +106,9 @@ func terminalColors(w io.Writer) colorMode {
 	return color16
 }
 
-// printOwl writes the owl with App Bird, the version and the tagline beside it.
-func printOwl(w io.Writer, mode colorMode) {
+// printOwl writes the owl with App Bird, the version and the tagline beside it. With line set, or
+// on a terminal without 256 colors, it draws the line owl rather than the pixel owl.
+func printOwl(w io.Writer, mode colorMode, line bool) {
 	name, ver, tag := "App Bird", "appbird "+version, "App Store metadata, reviewed like code."
 	if mode != noColor {
 		name = "\x1b[1;34m" + name + ansiReset
@@ -112,7 +116,7 @@ func printOwl(w io.Writer, mode colorMode) {
 	}
 	var owl []string
 	var top int // owl line the text starts beside
-	if mode >= color256 {
+	if mode >= color256 && !line {
 		owl, top = pixelOwl(mode), 3
 	} else {
 		owl, top = lineOwl(mode), 1
@@ -139,7 +143,12 @@ func lineOwl(mode colorMode) []string {
 			for k < len(line) && owlMask[i][k] == owlMask[i][j] {
 				k++
 			}
-			if c, ok := owlArtColors[owlMask[i][j]]; ok {
+			key := owlMask[i][j]
+			if c, ok := owlArtColors[key]; ok {
+				if mode >= color256 {
+					// The logo's own colors, from the pixel owl's palette.
+					c = "\x1b[1;" + ansiColor(mode, 38, owlPalette[owlArtPixel[key]]) + "m"
+				}
 				b.WriteString(c + line[j:k] + ansiReset)
 			} else {
 				b.WriteString(line[j:k])
@@ -151,8 +160,10 @@ func lineOwl(mode colorMode) []string {
 	return lines
 }
 
-// pixelOwl draws owlPixels with upper half blocks: the foreground is the top pixel and the
-// background the bottom one.
+// pixelOwl draws owlPixels two pixel rows per text line. Many terminals add line spacing that a
+// block glyph doesn't cover but the cell's background does, so a cell whose two pixels match is a
+// space on that background, and a cell that mixes two colors is a lower half block over the top
+// pixel's color, which leaves any gap above the glyph the color of the pixel it belongs to.
 func pixelOwl(mode colorMode) []string {
 	var lines []string
 	for y := 0; y+1 < len(owlPixels); y += 2 {
@@ -161,14 +172,19 @@ func pixelOwl(mode colorMode) []string {
 			top, topOK := owlPalette[owlPixels[y][x]]
 			bot, botOK := owlPalette[owlPixels[y+1][x]]
 			switch {
+			case topOK && botOK && top == bot:
+				b.WriteString("\x1b[" + ansiColor(mode, 48, top) + "m ")
 			case topOK && botOK:
-				b.WriteString("\x1b[" + ansiColor(mode, 38, top) + ";" + ansiColor(mode, 48, bot) + "m\u2580")
+				b.WriteString("\x1b[" + ansiColor(mode, 38, bot) + ";" + ansiColor(mode, 48, top) + "m\u2584")
 			case topOK:
-				b.WriteString("\x1b[" + ansiColor(mode, 38, top) + "m\u2580")
+				// Reverse video: the top pixel fills the cell and the lower half block takes the
+				// terminal's own background, so the gap above it stays the pixel's color too.
+				b.WriteString("\x1b[7;" + ansiColor(mode, 38, top) + "m\u2584")
 			case botOK:
 				b.WriteString("\x1b[" + ansiColor(mode, 38, bot) + "m\u2584")
 			default:
 				b.WriteString(" ")
+				continue
 			}
 			b.WriteString(ansiReset)
 		}
